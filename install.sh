@@ -115,7 +115,7 @@ fi
 
 if [ "$HAS_KEY" = "no" ]; then
     echo ""
-    read -p "  Enter your OpenAI API key (or press Enter to skip): " API_KEY
+    read -p "  Enter your OpenAI API key (or press Enter to skip): " API_KEY < /dev/tty
     if [ -n "$API_KEY" ]; then
         python3 -c "
 import json, os
