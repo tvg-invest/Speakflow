@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="180dp"
+    android:background="@color/bg"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="8dp">
+
+    <!-- Top row: switch keyboard + status -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="12dp">
+
+        <ImageButton
+            android:id="@+id/switchKeyboardBtn"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Switch keyboard"
+            android:scaleType="centerInside"
+            android:src="@android:drawable/ic_menu_sort_by_size"
+            android:tint="@color/dim" />
+
+        <TextView
+            android:id="@+id/imeStatus"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="Tap to record"
+            android:textColor="@color/accent"
+            android:textSize="14sp" />
+
+        <!-- Spacer to balance the layout -->
+        <View
+            android:layout_width="36dp"
+            android:layout_height="36dp" />
+    </LinearLayout>
+
+    <!-- Mic button -->
+    <ImageButton
+        android:id="@+id/imeMicBtn"
+        android:layout_width="64dp"
+        android:layout_height="64dp"
+        android:layout_marginTop="12dp"
+        android:layout_marginBottom="8dp"
+        android:background="@drawable/fab_bg"
+        android:contentDescription="Record"
+        android:padding="16dp"
+        android:scaleType="centerInside"
+        android:src="@drawable/ic_mic" />
+
+    <TextView
+        android:id="@+id/imeHint"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:text=""
+        android:textColor="@color/dim"
+        android:textSize="11sp" />
+
+</LinearLayout>

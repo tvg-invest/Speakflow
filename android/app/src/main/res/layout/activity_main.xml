@@ -137,7 +137,7 @@
                 android:textSize="14sp" />
         </LinearLayout>
 
-        <!-- Quick Settings tip -->
+        <!-- Keyboard setup -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -150,7 +150,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginBottom="8dp"
-                android:text="Record from any app"
+                android:text="\u2328\uFE0F  SpeakFlow Keyboard"
                 android:textColor="@color/white"
                 android:textSize="16sp"
                 android:textStyle="bold" />
@@ -158,8 +158,8 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:lineSpacingExtra="4dp"
-                android:text="1. Swipe ned fra toppen af skærmen\n2. Tryk \u270F\uFE0F (rediger) på Quick Settings\n3. Find og tilføj \u201CSpeakFlow\u201D flisen\n4. Tryk flisen for at optage fra enhver app"
+                android:lineSpacingExtra="5dp"
+                android:text="Diktér direkte i enhver app:\n\n1. Gå til Indstillinger \u2192 Sprog \u0026 input \u2192 Tastatur\n2. Slå \u201CSpeakFlow\u201D til\n3. I en tekstboks: hold tastaturikonet \u2192 vælg SpeakFlow\n4. Tap mikrofonen \u2192 tal \u2192 tap stop\n5. Teksten skrives direkte ind!"
                 android:textColor="@color/dim"
                 android:textSize="13sp" />
         </LinearLayout>

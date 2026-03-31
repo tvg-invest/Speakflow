@@ -27,6 +27,19 @@
             android:exported="false" />
 
         <service
+            android:name=".SpeakFlowIME"
+            android:label="SpeakFlow"
+            android:permission="android.permission.BIND_INPUT_METHOD"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/method" />
+        </service>
+
+        <service
             android:name=".RecordTileService"
             android:label="SpeakFlow"
             android:icon="@drawable/ic_mic"
