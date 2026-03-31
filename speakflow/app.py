@@ -266,6 +266,9 @@ class SpeakFlowUI(NSObject):
         show = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Show SpeakFlow", "showWindow:", "")
         show.setTarget_(self)
         menu.addItem_(show)
+        update_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Check for Updates", "checkForUpdates:", "")
+        update_item.setTarget_(self)
+        menu.addItem_(update_item)
         menu.addItem_(NSMenuItem.separatorItem())
         quit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Quit", "terminate:", "q")
         menu.addItem_(quit_item)
@@ -481,14 +484,28 @@ class SpeakFlowUI(NSObject):
         y -= lt_h + 12
 
         # ── Footer ──
+        btn_w = 130
+        gap = 12
+        total = btn_w * 2 + gap
+        bx = (W - total) / 2
+
         hist_btn = NSButton.alloc().initWithFrame_(
-            NSMakeRect((W - 130) / 2, y - 4, 130, 26))
+            NSMakeRect(bx, y - 4, btn_w, 26))
         hist_btn.setTitle_("View History")
         hist_btn.setBezelStyle_(NSBezelStyleRounded)
         hist_btn.setTarget_(self)
         hist_btn.setAction_("showHistory:")
         hist_btn.setFont_(NSFont.systemFontOfSize_(11))
         v.addSubview_(hist_btn)
+
+        self._update_btn = NSButton.alloc().initWithFrame_(
+            NSMakeRect(bx + btn_w + gap, y - 4, btn_w, 26))
+        self._update_btn.setTitle_("Check for Updates")
+        self._update_btn.setBezelStyle_(NSBezelStyleRounded)
+        self._update_btn.setTarget_(self)
+        self._update_btn.setAction_("checkForUpdates:")
+        self._update_btn.setFont_(NSFont.systemFontOfSize_(11))
+        v.addSubview_(self._update_btn)
         y -= 30
 
         self._label(v, "Hotkey = dictate  ·  Context Key = select + AI query",
@@ -892,6 +909,76 @@ class SpeakFlowUI(NSObject):
             if _LAUNCH_AGENT.exists():
                 _LAUNCH_AGENT.unlink()
             logger.info("Auto-start disabled.")
+
+    # ── Update ─────────────────────────────────────────────────
+
+    def checkForUpdates_(self, sender):
+        self._update_btn.setTitle_("Checking...")
+        self._update_btn.setEnabled_(False)
+        threading.Thread(target=self._do_update, daemon=True).start()
+
+    @objc.python_method
+    def _do_update(self):
+        install_dir = Path.home() / ".speakflow"
+        try:
+            # Check if it's a git repo
+            if not (install_dir / ".git").exists():
+                self._run_on_main(lambda: self._show_update_result("Not a git install — update manually."))
+                return
+
+            # Fetch latest
+            result = subprocess.run(
+                ["git", "fetch"], cwd=str(install_dir),
+                capture_output=True, text=True, timeout=15,
+            )
+            if result.returncode != 0:
+                self._run_on_main(lambda: self._show_update_result("Could not reach GitHub."))
+                return
+
+            # Check if behind
+            status = subprocess.run(
+                ["git", "status", "-uno"], cwd=str(install_dir),
+                capture_output=True, text=True, timeout=5,
+            )
+            if "behind" not in status.stdout:
+                self._run_on_main(lambda: self._show_update_result("Already up to date!"))
+                return
+
+            # Pull
+            pull = subprocess.run(
+                ["git", "pull", "--quiet"], cwd=str(install_dir),
+                capture_output=True, text=True, timeout=30,
+            )
+            if pull.returncode != 0:
+                self._run_on_main(lambda: self._show_update_result("Update failed. Run update.sh manually."))
+                return
+
+            # Reinstall deps
+            venv_pip = str(install_dir / "venv" / "bin" / "pip")
+            subprocess.run(
+                [venv_pip, "install", "--quiet", "-r", str(install_dir / "requirements.txt")],
+                capture_output=True, timeout=60,
+            )
+
+            self._run_on_main(lambda: self._show_update_result("Updated! Restart SpeakFlow to apply."))
+            logger.info("Update completed successfully.")
+
+        except Exception as exc:
+            logger.error("Update failed: %s", exc)
+            self._run_on_main(lambda: self._show_update_result(f"Error: {exc}"))
+
+    @objc.python_method
+    def _show_update_result(self, msg):
+        self._update_btn.setTitle_("Check for Updates")
+        self._update_btn.setEnabled_(True)
+        self.status_label.setStringValue_(msg)
+        self.status_label.setTextColor_(_ACCENT())
+
+        def _clear():
+            if not self._recording and not self._processing:
+                self._run_on_main(self._ui_ready)
+
+        threading.Timer(4.0, _clear).start()
 
     # ── Recording ───────────────────────────────────────────────
 
