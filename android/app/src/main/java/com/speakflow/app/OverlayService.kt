@@ -9,33 +9,38 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.PixelFormat
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.WindowManager
+import android.widget.ImageView
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.concurrent.thread
+import kotlin.math.abs
 
 class OverlayService : Service() {
 
     companion object {
         @Volatile
         var isRunning = false
-        const val ACTION_TOGGLE = "com.speakflow.app.TOGGLE"
-        const val ACTION_STOP_SERVICE = "com.speakflow.app.STOP_SERVICE"
-        private const val CHANNEL_ID = "speakflow_channel"
-        private const val CHANNEL_RECORDING_ID = "speakflow_recording"
-        private const val NOTIFICATION_ID = 1
-        private const val RESULT_NOTIFICATION_ID = 2
+        private const val CHANNEL_ID = "speakflow_float"
+        private const val NOTIFICATION_ID = 10
+        private const val RESULT_NOTIFICATION_ID = 11
         private const val SAMPLE_RATE = 16000
     }
 
+    private lateinit var windowManager: WindowManager
+    private lateinit var overlayButton: ImageView
     private val mainHandler = Handler(Looper.getMainLooper())
 
     @Volatile
@@ -52,114 +57,111 @@ class OverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         isRunning = true
-        createNotificationChannels()
-        startForeground(NOTIFICATION_ID, buildIdleNotification())
-    }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_TOGGLE -> toggleRecording()
-            ACTION_STOP_SERVICE -> {
-                if (recording) stopRecording()
-                isRunning = false
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
-            }
-        }
-        return START_STICKY
+        createNotificationChannel()
+        startForeground(NOTIFICATION_ID, buildNotification("Floating button active"))
+        createOverlayButton()
     }
 
     override fun onDestroy() {
         isRunning = false
         if (recording) stopRecording()
+        try {
+            windowManager.removeView(overlayButton)
+        } catch (_: Exception) {
+        }
         super.onDestroy()
     }
 
-    private fun createNotificationChannels() {
-        val nm = getSystemService(NotificationManager::class.java)
-
-        // Default channel for idle state
-        nm.createNotificationChannel(
-            NotificationChannel(
-                CHANNEL_ID, "SpeakFlow", NotificationManager.IMPORTANCE_DEFAULT
-            ).apply {
-                description = "SpeakFlow voice transcription"
-                setSound(null, null)
-            }
-        )
-
-        // High-priority channel for recording state (heads-up)
-        nm.createNotificationChannel(
-            NotificationChannel(
-                CHANNEL_RECORDING_ID, "SpeakFlow Recording",
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                description = "Shows when SpeakFlow is recording"
-                setSound(null, null)
-                enableVibration(false)
-            }
-        )
-    }
-
-    private fun togglePendingIntent(): PendingIntent {
-        val intent = Intent(this, OverlayService::class.java).apply {
-            action = ACTION_TOGGLE
+    private fun createNotificationChannel() {
+        val channel = NotificationChannel(
+            CHANNEL_ID, "SpeakFlow Floating Button", NotificationManager.IMPORTANCE_LOW
+        ).apply {
+            description = "Required for the floating record button"
+            setSound(null, null)
         }
-        return PendingIntent.getForegroundService(
-            this, 0, intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
-    private fun appPendingIntent(): PendingIntent {
+    private fun buildNotification(text: String): Notification {
         val intent = Intent(this, MainActivity::class.java)
-        return PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE)
-    }
-
-    private fun buildIdleNotification(): Notification {
+        val pending = PendingIntent.getActivity(
+            this, 0, intent, PendingIntent.FLAG_IMMUTABLE
+        )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("SpeakFlow")
-            .setContentText("Tap to start recording")
+            .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setContentIntent(pending)
             .setOngoing(true)
-            .setContentIntent(togglePendingIntent())
-            .addAction(0, "\uD83C\uDFA4  Record", togglePendingIntent())
             .build()
     }
 
-    private fun buildRecordingNotification(): Notification {
-        return NotificationCompat.Builder(this, CHANNEL_RECORDING_ID)
-            .setContentTitle("\uD83D\uDD34 Recording...")
-            .setContentText("Tap to stop and transcribe")
-            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setColor(getColor(R.color.red))
-            .setOngoing(true)
-            .setContentIntent(togglePendingIntent())
-            .addAction(0, "\u23F9  Stop & Transcribe", togglePendingIntent())
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .build()
-    }
+    private fun createOverlayButton() {
+        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        val density = resources.displayMetrics.density
+        val size = (56 * density).toInt()
+        val padding = (14 * density).toInt()
 
-    private fun buildProcessingNotification(): Notification {
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("SpeakFlow")
-            .setContentText("Transcribing...")
-            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setOngoing(true)
-            .setContentIntent(appPendingIntent())
-            .build()
-    }
-
-    private fun updateNotification(notification: Notification) {
-        getSystemService(NotificationManager::class.java)
-            .notify(NOTIFICATION_ID, notification)
-    }
-
-    private fun toggleRecording() {
-        if (processing) {
-            toast("Still processing, please wait...")
-            return
+        overlayButton = ImageView(this).apply {
+            setImageResource(R.drawable.ic_mic)
+            setBackgroundResource(R.drawable.fab_bg)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding(padding, padding, padding, padding)
         }
+
+        val params = WindowManager.LayoutParams(
+            size, size,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            x = (8 * density).toInt()
+        }
+
+        var initialX = 0
+        var initialY = 0
+        var initialTouchX = 0f
+        var initialTouchY = 0f
+        var moved = false
+
+        overlayButton.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    initialX = params.x
+                    initialY = params.y
+                    initialTouchX = event.rawX
+                    initialTouchY = event.rawY
+                    moved = false
+                    true
+                }
+
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = (event.rawX - initialTouchX).toInt()
+                    val dy = (event.rawY - initialTouchY).toInt()
+                    if (abs(dx) > 10 || abs(dy) > 10) {
+                        moved = true
+                        params.x = initialX - dx
+                        params.y = initialY + dy
+                        windowManager.updateViewLayout(overlayButton, params)
+                    }
+                    true
+                }
+
+                MotionEvent.ACTION_UP -> {
+                    if (!moved) onButtonTap()
+                    true
+                }
+
+                else -> false
+            }
+        }
+
+        windowManager.addView(overlayButton, params)
+    }
+
+    private fun onButtonTap() {
+        if (processing) return
         if (recording) {
             stopRecording()
             processAudio()
@@ -178,7 +180,7 @@ class OverlayService : Service() {
         )
 
         if (bufSize <= 0) {
-            toast("Mic error: cannot determine buffer size")
+            toast("Mic error")
             return
         }
 
@@ -204,7 +206,7 @@ class OverlayService : Service() {
 
         audioRecord?.startRecording()
         recording = true
-        updateNotification(buildRecordingNotification())
+        overlayButton.setBackgroundResource(R.drawable.fab_bg_recording)
         toast("Recording...")
 
         recordingThread = thread {
@@ -229,34 +231,25 @@ class OverlayService : Service() {
         }
         audioRecord?.release()
         audioRecord = null
+        mainHandler.post { overlayButton.setBackgroundResource(R.drawable.fab_bg) }
     }
 
     private fun processAudio() {
         val pcmData = synchronized(audioBuffer) { audioBuffer.toByteArray() }
-        val durationMs = (pcmData.size.toLong() * 1000) / (SAMPLE_RATE * 2)
 
-        if (pcmData.size < 6400) {  // ~0.2s
-            toast("Recording too short (${durationMs}ms)")
-            updateNotification(buildIdleNotification())
+        if (pcmData.size < 6400) {
+            toast("Too short")
             return
         }
 
         processing = true
-        updateNotification(buildProcessingNotification())
-        toast("Transcribing ${durationMs / 1000.0}s of audio...")
+        toast("Transcribing...")
 
         val wavData = pcmToWav(pcmData)
         val prefs = getSharedPreferences("speakflow", MODE_PRIVATE)
         val apiKey = prefs.getString("api_key", "") ?: ""
         val language = prefs.getString("language", "da") ?: "da"
         val aiCleanup = prefs.getBoolean("ai_cleanup", true)
-
-        if (apiKey.isEmpty()) {
-            toast("No API key set!")
-            processing = false
-            updateNotification(buildIdleNotification())
-            return
-        }
 
         thread {
             try {
@@ -272,48 +265,37 @@ class OverlayService : Service() {
                     text = client.cleanup(text, language)
                 }
 
-                // Copy to clipboard
                 mainHandler.post {
                     val clipboard =
                         getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                     clipboard.setPrimaryClip(ClipData.newPlainText("SpeakFlow", text))
-                    Toast.makeText(
-                        this,
-                        "Copied: ${text.take(80)}${if (text.length > 80) "..." else ""}",
-                        Toast.LENGTH_LONG
-                    ).show()
                 }
 
-                // Show result notification
                 val nm = getSystemService(NotificationManager::class.java)
-                nm.notify(RESULT_NOTIFICATION_ID, buildResultNotification(text))
+                val notif = NotificationCompat.Builder(this, CHANNEL_ID)
+                    .setContentTitle("SpeakFlow \u2014 Copied!")
+                    .setContentText(text)
+                    .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+                    .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+                    .setAutoCancel(true)
+                    .build()
+                nm.notify(RESULT_NOTIFICATION_ID, notif)
+
+                toast("Copied!")
             } catch (e: Exception) {
                 toast("Error: ${e.message}")
             } finally {
                 processing = false
-                updateNotification(buildIdleNotification())
             }
         }
     }
 
-    private fun buildResultNotification(text: String): Notification {
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("SpeakFlow \u2014 Copied!")
-            .setContentText(text)
-            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-            .setAutoCancel(true)
-            .setContentIntent(appPendingIntent())
-            .build()
-    }
-
     private fun toast(msg: String) {
-        mainHandler.post { Toast.makeText(this, msg, Toast.LENGTH_LONG).show() }
+        mainHandler.post { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
     }
 
     private fun pcmToWav(pcmData: ByteArray): ByteArray {
         val byteRate = SAMPLE_RATE * 2
-
         val header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN).apply {
             put("RIFF".toByteArray())
             putInt(pcmData.size + 36)
@@ -329,7 +311,6 @@ class OverlayService : Service() {
             put("data".toByteArray())
             putInt(pcmData.size)
         }
-
         return header.array() + pcmData
     }
 }
