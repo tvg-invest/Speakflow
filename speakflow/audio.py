@@ -200,24 +200,26 @@ class AudioRecorder:
                 "No microphone or audio input device found."
             )
 
+    _MAX_OPEN_RETRIES: int = 3
+    _RETRY_DELAY: float = 0.3
+
     def _record_loop(self) -> None:
-        """Background thread: open an input stream and collect chunks."""
+        """Background thread: open an input stream and collect chunks.
+
+        Retries opening the audio device up to ``_MAX_OPEN_RETRIES`` times
+        to recover from transient PortAudio errors (e.g. after sleep/wake).
+        """
         self._recording_start_time = time.monotonic()
 
         try:
-            with sd.InputStream(
-                samplerate=self.sample_rate,
-                channels=self.channels,
-                dtype="int16",
-                blocksize=self._CHUNK_FRAMES,
-            ) as stream:
+            stream = self._open_stream_with_retry()
+            with stream:
                 while not self._stop_event.is_set():
                     elapsed = time.monotonic() - self._recording_start_time
                     if elapsed >= self.max_duration:
                         break
 
                     data, overflowed = stream.read(self._CHUNK_FRAMES)
-                    # *data* is an ndarray of shape (chunk, channels).
                     chunk = data.copy()
 
                     with self._lock:
@@ -246,6 +248,25 @@ class AudioRecorder:
                     pass
         finally:
             self._recording = False
+
+    def _open_stream_with_retry(self) -> sd.InputStream:
+        """Try to open the audio input stream, retrying on transient errors."""
+        last_exc = None
+        for attempt in range(self._MAX_OPEN_RETRIES):
+            try:
+                stream = sd.InputStream(
+                    samplerate=self.sample_rate,
+                    channels=self.channels,
+                    dtype="int16",
+                    blocksize=self._CHUNK_FRAMES,
+                )
+                stream.start()
+                return stream
+            except sd.PortAudioError as exc:
+                last_exc = exc
+                if attempt < self._MAX_OPEN_RETRIES - 1:
+                    time.sleep(self._RETRY_DELAY)
+        raise last_exc
 
     # ------------------------------------------------------------------
     # Silence detection
