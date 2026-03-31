@@ -3,10 +3,8 @@ package com.speakflow.app
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -103,29 +101,17 @@ class MainActivity : AppCompatActivity() {
         }
         prefs.edit().putString("language", langCode).apply()
 
-        // Check overlay permission
-        if (!Settings.canDrawOverlays(this)) {
-            statusText.text = "Grant overlay permission"
-            statusText.setTextColor(getColor(R.color.orange))
-            startActivity(
-                Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:$packageName")
-                )
-            )
-            return
-        }
-
         val serviceIntent = Intent(this, OverlayService::class.java)
         if (OverlayService.isRunning) {
-            stopService(serviceIntent)
+            serviceIntent.action = OverlayService.ACTION_STOP_SERVICE
+            startService(serviceIntent)
             startButton.text = "Start SpeakFlow"
             statusText.text = "Stopped"
             statusText.setTextColor(getColor(R.color.dim))
         } else {
             startForegroundService(serviceIntent)
             startButton.text = "Stop SpeakFlow"
-            statusText.text = "Running \u2014 floating button active"
+            statusText.text = "Running \u2014 tap notification to record"
             statusText.setTextColor(getColor(R.color.green))
         }
     }
@@ -134,7 +120,7 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         if (OverlayService.isRunning) {
             startButton.text = "Stop SpeakFlow"
-            statusText.text = "Running \u2014 floating button active"
+            statusText.text = "Running \u2014 tap notification to record"
             statusText.setTextColor(getColor(R.color.green))
         } else {
             startButton.text = "Start SpeakFlow"

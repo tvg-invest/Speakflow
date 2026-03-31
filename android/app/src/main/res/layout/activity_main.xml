@@ -131,7 +131,7 @@
             android:gravity="center"
             android:layout_marginTop="20dp"
             android:lineSpacingExtra="4dp"
-            android:text="Tap the floating button to record\nTap again to stop and transcribe\nText is copied to your clipboard"
+            android:text="Tap the notification to start recording\nTap again to stop and transcribe\nText is copied to your clipboard"
             android:textColor="@color/dim"
             android:textSize="12sp" />
 
