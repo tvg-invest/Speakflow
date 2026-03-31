@@ -3,15 +3,12 @@ package com.speakflow.app
 import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import android.view.View
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
@@ -30,8 +27,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var resultText: TextView
     private lateinit var languageSpinner: Spinner
     private lateinit var cleanupCheck: CheckBox
-    private lateinit var floatButton: Button
-    private lateinit var floatStatus: TextView
 
     private val prefs by lazy { getSharedPreferences("speakflow", MODE_PRIVATE) }
 
@@ -80,31 +75,12 @@ class MainActivity : AppCompatActivity() {
         languageSpinner.setSelection(langIndex)
         cleanupCheck.isChecked = prefs.getBoolean("ai_cleanup", true)
 
-        floatButton = findViewById(R.id.floatButton)
-        floatStatus = findViewById(R.id.floatStatus)
-
         recordButton.setOnClickListener { onRecordTap() }
         cleanupCheck.setOnCheckedChangeListener { _, checked ->
             prefs.edit().putBoolean("ai_cleanup", checked).apply()
         }
-        floatButton.setOnClickListener { toggleFloatingButton() }
 
         requestPermissions()
-    }
-
-    override fun onResume() {
-        super.onResume()
-        updateFloatUI()
-        // Auto-start overlay if user just granted permission
-        if (Settings.canDrawOverlays(this) && !OverlayService.isRunning
-            && floatStatus.visibility == View.VISIBLE
-        ) {
-            val apiKey = prefs.getString("api_key", "") ?: ""
-            if (apiKey.isNotEmpty()) {
-                startForegroundService(Intent(this, OverlayService::class.java))
-                updateFloatUI()
-            }
-        }
     }
 
     private fun requestPermissions() {
@@ -333,52 +309,4 @@ class MainActivity : AppCompatActivity() {
         return header.array() + pcmData
     }
 
-    // ── Floating button ──────────────────────────────────────
-
-    private fun toggleFloatingButton() {
-        saveSettings()
-
-        val apiKey = prefs.getString("api_key", "") ?: ""
-        if (apiKey.isEmpty()) {
-            floatStatus.text = "Enter your API key first"
-            floatStatus.setTextColor(getColor(R.color.orange))
-            floatStatus.visibility = View.VISIBLE
-            return
-        }
-
-        if (OverlayService.isRunning) {
-            stopService(Intent(this, OverlayService::class.java))
-            updateFloatUI()
-            return
-        }
-
-        // Check overlay permission
-        if (!Settings.canDrawOverlays(this)) {
-            floatStatus.text = "Enable \"Display over other apps\" for SpeakFlow, then come back"
-            floatStatus.setTextColor(getColor(R.color.orange))
-            floatStatus.visibility = View.VISIBLE
-            startActivity(
-                Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:$packageName")
-                )
-            )
-            return
-        }
-
-        startForegroundService(Intent(this, OverlayService::class.java))
-        updateFloatUI()
-    }
-
-    private fun updateFloatUI() {
-        if (OverlayService.isRunning) {
-            floatButton.text = "Stop Floating Button"
-            floatStatus.text = "Tap the blue mic button on screen to record"
-            floatStatus.setTextColor(getColor(R.color.green))
-            floatStatus.visibility = View.VISIBLE
-        } else {
-            floatButton.text = "Start Floating Button"
-            floatStatus.visibility = View.GONE
-        }
-    }
 }
