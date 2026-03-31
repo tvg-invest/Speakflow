@@ -31,6 +31,8 @@ from PyObjCTools import AppHelper
 from pynput import keyboard as kb
 import ApplicationServices
 
+import openai
+
 from .audio import AudioRecorder
 from .config import Config
 from . import history
@@ -168,6 +170,7 @@ class SpeakFlowUI(NSObject):
         self._build_window()
         self._build_floating_indicator()
         self._check_permissions()
+        self._check_api_key()
         self.hotkey_listener.start()
         self.context_listener.start()
 
@@ -194,6 +197,13 @@ class SpeakFlowUI(NSObject):
             logger.warning("Microphone access denied.")
             self.status_label.setStringValue_("Giv mikrofon-tilladelse i System Settings")
             self.status_label.setTextColor_(_ORANGE())
+
+    @objc.python_method
+    def _check_api_key(self):
+        if not self.config.openai_api_key:
+            self.status_label.setStringValue_("Enter your OpenAI API key in Settings ↓")
+            self.status_label.setTextColor_(_ORANGE())
+            logger.warning("No OpenAI API key configured.")
 
     @objc.python_method
     def show_window(self):
@@ -281,7 +291,7 @@ class SpeakFlowUI(NSObject):
 
     @objc.python_method
     def _build_window(self):
-        W, H = 460, 760
+        W, H = 460, 794
         screen = NSScreen.mainScreen().frame()
         cx = (screen.size.width - W) / 2
         cy = (screen.size.height - H) / 2
@@ -330,9 +340,9 @@ class SpeakFlowUI(NSObject):
         sc.addSubview_(self.rec_button)
         y -= card_h + 16
 
-        # ── Settings card (8 rows) ──
+        # ── Settings card (9 rows) ──
         row_h = 34
-        num_rows = 8
+        num_rows = 9
         set_h = 44 + num_rows * row_h + 10
         stc = self._card(v, pad, y - set_h, cw, set_h)
 
@@ -343,6 +353,27 @@ class SpeakFlowUI(NSObject):
         ry = set_h - 44 - row_h
         lx = 20
         rx = cw - 24
+
+        # Row 0 — API Key
+        self._label(stc, "API Key", lx, ry + 6, 80, 24,
+                    NSFont.systemFontOfSize_(13), _DIM())
+        self.api_key_field = NSTextField.alloc().initWithFrame_(
+            NSMakeRect(lx + 80, ry + 5, cw - 130, 24))
+        key_val = self.config.openai_api_key
+        if key_val:
+            masked = key_val[:3] + "•" * max(0, len(key_val) - 7) + key_val[-4:]
+            self.api_key_field.setStringValue_(masked)
+        else:
+            self.api_key_field.setPlaceholderString_("sk-...")
+        self.api_key_field.setFont_(NSFont.monospacedSystemFontOfSize_weight_(11, 0.0))
+        self.api_key_field.setTextColor_(_WHITE())
+        self.api_key_field.setBackgroundColor_(NSColor.colorWithCalibratedRed_green_blue_alpha_(0.12, 0.12, 0.16, 1.0))
+        self.api_key_field.setBezeled_(True)
+        self.api_key_field.setBezelStyle_(1)
+        self.api_key_field.setTarget_(self)
+        self.api_key_field.setAction_("apiKeyChanged:")
+        stc.addSubview_(self.api_key_field)
+        ry -= row_h
 
         # Row 1 — Hotkey
         self._label(stc, "Hotkey", lx, ry + 6, 80, 24,
@@ -856,6 +887,21 @@ class SpeakFlowUI(NSObject):
         except Exception:
             logger.error("Hotkey apply error:\n%s", traceback.format_exc())
 
+    def apiKeyChanged_(self, sender):
+        raw = sender.stringValue().strip()
+        if not raw or "•" in raw:
+            # User didn't actually change it (masked value or empty)
+            return
+        self.config.openai_api_key = raw
+        self.transcriber.client = openai.OpenAI(api_key=raw)
+        # Mask the displayed key
+        masked = raw[:3] + "•" * max(0, len(raw) - 7) + raw[-4:]
+        sender.setStringValue_(masked)
+        self.status_label.setStringValue_("API key saved!")
+        self.status_label.setTextColor_(_GREEN())
+        logger.info("API key updated.")
+        threading.Timer(2.0, lambda: self._run_on_main(self._ui_ready)).start()
+
     def languageChanged_(self, sender):
         name = sender.titleOfSelectedItem()
         code = LANG_CODES.get(name, "da")
@@ -986,6 +1032,9 @@ class SpeakFlowUI(NSObject):
     def _on_activate(self):
         if self._capturing:
             return
+        if not self.config.openai_api_key:
+            self._run_on_main(lambda: self._ui_error("Enter your API key in Settings first"))
+            return
         with self._stop_lock:
             if self._recording or self._processing:
                 return
@@ -1053,6 +1102,9 @@ class SpeakFlowUI(NSObject):
     @objc.python_method
     def _on_context_activate(self):
         if self._capturing:
+            return
+        if not self.config.openai_api_key:
+            self._run_on_main(lambda: self._ui_error("Enter your API key in Settings first"))
             return
         with self._stop_lock:
             if self._recording or self._processing:
