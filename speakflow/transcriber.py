@@ -1,0 +1,225 @@
+"""Speech-to-text transcription module using the OpenAI Whisper API."""
+
+import io
+import logging
+
+import openai
+
+logger = logging.getLogger(__name__)
+
+
+class Transcriber:
+    """Handles speech-to-text transcription via OpenAI Whisper and optional
+    GPT-based text cleanup."""
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "whisper-1",
+        language: str = "da",
+        auto_detect: bool = True,
+        ai_cleanup: bool = True,
+        cleanup_model: str = "gpt-4o-mini",
+    ) -> None:
+        self.client = openai.OpenAI(api_key=api_key)
+        self.model = model
+        self.language = language
+        self.auto_detect = auto_detect
+        self.ai_cleanup = ai_cleanup
+        self.cleanup_model = cleanup_model
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def transcribe(self, audio_data: bytes, app_context: str = "") -> str:
+        """Transcribe WAV audio bytes into text.
+
+        Args:
+            audio_data: Raw WAV audio content.
+            app_context: Name of the frontmost app (for context-aware cleanup).
+
+        Returns:
+            The transcribed (and optionally cleaned-up) text.
+
+        Raises:
+            RuntimeError: If the OpenAI API call fails.
+        """
+        buf = io.BytesIO(audio_data)
+        buf.name = "recording.wav"
+
+        kwargs: dict = {
+            "model": self.model,
+            "file": buf,
+        }
+        if not self.auto_detect:
+            kwargs["language"] = self.language
+
+        try:
+            logger.debug(
+                "Sending audio to Whisper API (model=%s, auto_detect=%s)",
+                self.model,
+                self.auto_detect,
+            )
+            response = self.client.audio.transcriptions.create(**kwargs)
+            raw_text: str = response.text
+            logger.debug("Raw transcription: %s", raw_text)
+        except openai.AuthenticationError:
+            logger.error("Invalid OpenAI API key.")
+            raise RuntimeError(
+                "Authentication failed. Please check your OpenAI API key."
+            )
+        except openai.RateLimitError:
+            logger.error("OpenAI rate limit exceeded.")
+            raise RuntimeError(
+                "Rate limit exceeded. Please wait a moment and try again."
+            )
+        except openai.APIConnectionError:
+            logger.error("Could not connect to the OpenAI API.")
+            raise RuntimeError(
+                "Unable to reach the OpenAI API. Check your internet connection."
+            )
+        except openai.APIError as exc:
+            logger.error("OpenAI API error during transcription: %s", exc)
+            raise RuntimeError(f"Transcription failed: {exc}") from exc
+
+        if self.ai_cleanup and raw_text.strip():
+            return self.cleanup_text(raw_text, self.language, app_context)
+
+        return raw_text
+
+    def cleanup_text(self, raw_text: str, language: str, app_context: str = "") -> str:
+        """Use a GPT model to clean up a raw speech transcription.
+
+        Args:
+            raw_text:  The unprocessed transcription text.
+            language:  ISO-639-1 language code.
+            app_context: Frontmost app name for tone adaptation.
+
+        Returns:
+            The cleaned-up text.
+        """
+        # Context-aware tone hint
+        context_hint = ""
+        if app_context:
+            al = app_context.lower()
+            if any(x in al for x in ("mail", "outlook", "gmail", "spark")):
+                context_hint = " The user is writing an email — use a professional, clear tone."
+            elif any(x in al for x in ("messages", "imessage", "messenger", "telegram",
+                                        "whatsapp", "slack", "discord", "teams")):
+                context_hint = " The user is writing a chat message — keep it casual and natural."
+            elif any(x in al for x in ("code", "xcode", "terminal", "intellij",
+                                        "pycharm", "cursor", "sublime", "vim", "neovim")):
+                context_hint = " The user is in a code editor — if it sounds like a comment, format it as a concise code comment."
+            elif any(x in al for x in ("notes", "notion", "obsidian", "bear", "craft")):
+                context_hint = " The user is writing notes — keep it concise and well-structured."
+
+        system_prompt = (
+            "You are a text cleanup assistant. Clean up the following speech "
+            "transcription. Fix punctuation, remove filler words (like 'um', "
+            "'uh', '\u00f8h', 'alts\u00e5'), fix obvious speech-to-text errors, but "
+            "preserve the original meaning and language. Keep the same language "
+            "as the input. Output ONLY the cleaned text, nothing else."
+            + context_hint
+        )
+
+        try:
+            logger.debug(
+                "Cleaning up transcription with %s (language=%s)",
+                self.cleanup_model,
+                language,
+            )
+            response = self.client.chat.completions.create(
+                model=self.cleanup_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": raw_text},
+                ],
+            )
+            cleaned: str = response.choices[0].message.content.strip()
+            logger.debug("Cleaned transcription: %s", cleaned)
+            return cleaned
+        except openai.AuthenticationError:
+            logger.error("Invalid OpenAI API key during cleanup.")
+            raise RuntimeError(
+                "Authentication failed. Please check your OpenAI API key."
+            )
+        except openai.RateLimitError:
+            logger.error("OpenAI rate limit exceeded during cleanup.")
+            raise RuntimeError(
+                "Rate limit exceeded. Please wait a moment and try again."
+            )
+        except openai.APIConnectionError:
+            logger.error("Could not connect to the OpenAI API during cleanup.")
+            raise RuntimeError(
+                "Unable to reach the OpenAI API. Check your internet connection."
+            )
+        except openai.APIError as exc:
+            logger.error("OpenAI API error during text cleanup: %s", exc)
+            raise RuntimeError(f"Text cleanup failed: {exc}") from exc
+
+    def context_query(
+        self,
+        selected_text: str,
+        voice_instruction: str,
+        model: str = "gpt-4o",
+        app_context: str = "",
+    ) -> str:
+        """Use GPT to respond based on selected text and a voice instruction.
+
+        Args:
+            selected_text: Text the user highlighted on screen.
+            voice_instruction: Transcribed voice command from the user.
+            model: GPT model to use.
+            app_context: Frontmost app name for tone adaptation.
+
+        Returns:
+            The generated response text.
+        """
+        context_hint = ""
+        if app_context:
+            context_hint = f"\nThe user is currently in: {app_context}"
+
+        system_prompt = (
+            "You are a helpful assistant. The user has selected some text on "
+            "their screen and is giving you a voice instruction about it. "
+            "Follow the instruction precisely. If asked to draft a reply, "
+            "write ONLY the reply — no explanations, no labels, no quotes "
+            "around it. Match the language of the user's voice instruction."
+            + context_hint
+        )
+
+        user_msg = (
+            f"Selected text:\n---\n{selected_text}\n---\n\n"
+            f"Voice instruction: {voice_instruction}"
+        )
+
+        try:
+            logger.debug("Context query with model=%s", model)
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_msg},
+                ],
+            )
+            result: str = response.choices[0].message.content.strip()
+            logger.debug("Context response: %s", result[:200])
+            return result
+        except openai.AuthenticationError:
+            raise RuntimeError("Authentication failed. Check your API key.")
+        except openai.RateLimitError:
+            raise RuntimeError("Rate limit exceeded. Wait a moment and retry.")
+        except openai.APIConnectionError:
+            raise RuntimeError("Cannot reach the OpenAI API. Check your connection.")
+        except openai.APIError as exc:
+            raise RuntimeError(f"Context query failed: {exc}") from exc
+
+    def set_language(self, language: str) -> None:
+        """Change the target transcription language.
+
+        Args:
+            language: ISO-639-1 language code (e.g. ``"da"``, ``"en"``).
+        """
+        self.language = language
+        logger.info("Transcription language set to '%s'.", language)
