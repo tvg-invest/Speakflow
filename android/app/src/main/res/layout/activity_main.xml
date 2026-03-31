@@ -14,7 +14,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:gravity="center"
-            android:layout_marginTop="32dp"
+            android:layout_marginTop="24dp"
             android:text="SpeakFlow"
             android:textColor="@color/white"
             android:textSize="28sp"
@@ -24,12 +24,12 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:gravity="center"
-            android:layout_marginBottom="32dp"
+            android:layout_marginBottom="24dp"
             android:text="Voice to text, effortlessly"
             android:textColor="@color/dim"
             android:textSize="14sp" />
 
-        <!-- Status card -->
+        <!-- Record card -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -37,26 +37,38 @@
             android:background="@drawable/card_bg"
             android:gravity="center"
             android:orientation="vertical"
-            android:padding="20dp">
+            android:padding="24dp">
 
             <TextView
                 android:id="@+id/statusText"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="center"
-                android:text="Ready"
+                android:text="Tap to record"
                 android:textColor="@color/accent"
                 android:textSize="18sp"
                 android:textStyle="bold" />
 
             <Button
-                android:id="@+id/startButton"
-                android:layout_width="200dp"
-                android:layout_height="48dp"
+                android:id="@+id/recordButton"
+                android:layout_width="220dp"
+                android:layout_height="56dp"
                 android:layout_gravity="center"
                 android:layout_marginTop="16dp"
-                android:text="Start SpeakFlow"
-                android:textAllCaps="false" />
+                android:text="\uD83C\uDFA4  Record"
+                android:textAllCaps="false"
+                android:textSize="18sp" />
+
+            <TextView
+                android:id="@+id/resultText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:layout_marginTop="16dp"
+                android:text=""
+                android:textColor="@color/white"
+                android:textSize="14sp"
+                android:visibility="gone" />
         </LinearLayout>
 
         <!-- Settings card -->
@@ -118,11 +130,11 @@
                 android:id="@+id/cleanupCheck"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:buttonTint="@color/accent"
                 android:checked="true"
                 android:text="AI Cleanup"
                 android:textColor="@color/dim"
-                android:textSize="14sp"
-                android:buttonTint="@color/accent" />
+                android:textSize="14sp" />
         </LinearLayout>
 
         <TextView
@@ -131,7 +143,7 @@
             android:gravity="center"
             android:layout_marginTop="20dp"
             android:lineSpacingExtra="4dp"
-            android:text="Tap the notification to start recording\nTap again to stop and transcribe\nText is copied to your clipboard"
+            android:text="Tap Record, speak, tap Stop.\nText is copied to your clipboard."
             android:textColor="@color/dim"
             android:textSize="12sp" />
 
