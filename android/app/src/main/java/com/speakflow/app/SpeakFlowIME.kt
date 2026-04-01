@@ -150,7 +150,7 @@ class SpeakFlowIME : InputMethodService() {
         val wavData = pcmToWav(pcmData)
         val prefs = getSharedPreferences("speakflow", MODE_PRIVATE)
         val apiKey = prefs.getString("api_key", "") ?: ""
-        val language = prefs.getString("language", "da") ?: "da"
+        val language = prefs.getString("language", "auto") ?: "auto"
         val aiCleanup = prefs.getBoolean("ai_cleanup", true)
 
         thread {

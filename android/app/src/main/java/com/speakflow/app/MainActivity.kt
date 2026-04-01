@@ -69,7 +69,7 @@ class MainActivity : AppCompatActivity() {
             apiKeyField.setText(masked)
         }
 
-        val langIndex = when (prefs.getString("language", "da")) {
+        val langIndex = when (prefs.getString("language", "auto")) {
             "da" -> 0; "en" -> 1; else -> 2
         }
         languageSpinner.setSelection(langIndex)

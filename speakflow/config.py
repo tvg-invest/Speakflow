@@ -10,7 +10,7 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 DEFAULTS: dict[str, Any] = {
     "openai_api_key": "",
     "hotkey": "ctrl+shift+space",
-    "language": "da",
+    "language": "auto",
     "auto_language_detect": True,
     "model": "whisper-1",
     "max_recording_seconds": 120,
