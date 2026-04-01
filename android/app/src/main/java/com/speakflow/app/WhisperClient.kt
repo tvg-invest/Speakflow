@@ -36,18 +36,20 @@ class WhisperClient(private val apiKey: String) {
             .build()
 
         val response = client.newCall(request).execute()
-        val responseBody = response.body?.string() ?: ""
+        return response.use {
+            val responseBody = it.body?.string() ?: ""
 
-        if (!response.isSuccessful) {
-            val error = try {
-                JSONObject(responseBody).getJSONObject("error").getString("message")
-            } catch (_: Exception) {
-                responseBody
+            if (!it.isSuccessful) {
+                val error = try {
+                    JSONObject(responseBody).getJSONObject("error").getString("message")
+                } catch (_: Exception) {
+                    responseBody
+                }
+                throw RuntimeException(error)
             }
-            throw RuntimeException(error)
-        }
 
-        return JSONObject(responseBody).getString("text")
+            JSONObject(responseBody).getString("text")
+        }
     }
 
     fun cleanup(text: String, language: String): String {
@@ -75,22 +77,23 @@ class WhisperClient(private val apiKey: String) {
             .build()
 
         val response = client.newCall(request).execute()
-        val responseBody = response.body?.string() ?: ""
+        return response.use {
+            val responseBody = it.body?.string() ?: ""
 
-        if (!response.isSuccessful) {
-            // If cleanup fails, return original text
-            return text
-        }
+            if (!it.isSuccessful) {
+                return text
+            }
 
-        return try {
-            JSONObject(responseBody)
-                .getJSONArray("choices")
-                .getJSONObject(0)
-                .getJSONObject("message")
-                .getString("content")
-                .trim()
-        } catch (_: Exception) {
-            text
+            try {
+                JSONObject(responseBody)
+                    .getJSONArray("choices")
+                    .getJSONObject(0)
+                    .getJSONObject("message")
+                    .getString("content")
+                    .trim()
+            } catch (_: Exception) {
+                text
+            }
         }
     }
 }

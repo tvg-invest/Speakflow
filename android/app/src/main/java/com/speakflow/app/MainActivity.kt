@@ -80,7 +80,26 @@ class MainActivity : AppCompatActivity() {
             prefs.edit().putBoolean("ai_cleanup", checked).apply()
         }
 
+        // Save API key immediately when focus leaves the field
+        apiKeyField.setOnFocusChangeListener { _, hasFocus ->
+            if (!hasFocus) saveSettings()
+        }
+
+        // Save language immediately when changed
+        languageSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, pos: Int, id: Long) {
+                val langCode = when (pos) { 0 -> "da"; 1 -> "en"; else -> "auto" }
+                prefs.edit().putString("language", langCode).apply()
+            }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+
         requestPermissions()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        saveSettings()
     }
 
     private fun requestPermissions() {

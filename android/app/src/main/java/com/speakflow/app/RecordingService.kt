@@ -145,6 +145,7 @@ class RecordingService : Service() {
         val wavData = pcmToWav(pcmData)
         val prefs = getSharedPreferences("speakflow", MODE_PRIVATE)
         val apiKey = prefs.getString("api_key", "") ?: ""
+        if (apiKey.isEmpty()) { toast("Set API key in SpeakFlow app first"); finish(); return }
         val language = prefs.getString("language", "da") ?: "da"
         val aiCleanup = prefs.getBoolean("ai_cleanup", true)
 

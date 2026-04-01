@@ -1,8 +1,5 @@
 package com.speakflow.app
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
 import android.inputmethodservice.InputMethodService
 import android.media.AudioFormat
 import android.media.AudioRecord
@@ -13,7 +10,6 @@ import android.view.View
 import android.view.inputmethod.InputMethodManager
 import android.widget.ImageButton
 import android.widget.TextView
-import android.widget.Toast
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder

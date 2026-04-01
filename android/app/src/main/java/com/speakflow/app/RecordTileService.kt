@@ -7,15 +7,16 @@ import android.service.quicksettings.TileService
 class RecordTileService : TileService() {
 
     override fun onClick() {
+        // Read state BEFORE sending intent
+        val wasRecording = RecordingService.isRecording
+
         val intent = Intent(this, RecordingService::class.java).apply {
             action = RecordingService.ACTION_TOGGLE
         }
         startForegroundService(intent)
 
-        // Update tile after a short delay to let the service process
+        // Update tile based on pre-toggle state
         qsTile?.let { tile ->
-            // Toggle: if was recording, now stopping; if was idle, now recording
-            val wasRecording = RecordingService.isRecording
             tile.state = if (wasRecording) Tile.STATE_INACTIVE else Tile.STATE_ACTIVE
             tile.label = if (wasRecording) "SpeakFlow" else "Recording..."
             tile.updateTile()

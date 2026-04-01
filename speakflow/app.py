@@ -1320,7 +1320,8 @@ class SpeakFlowUI(NSObject):
         self._status_dot.layer().setBackgroundColor_(_RED().CGColor())
         if self.config.sound_feedback:
             play_error_sound()
-        self._show_float("recording", _RED())
+        self._set_float_color(_RED())
+        self._float_win.orderFront_(None)
 
         def _auto_clear():
             # Only clear the error if no new recording/processing has started.
