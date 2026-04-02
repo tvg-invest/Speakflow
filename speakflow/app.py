@@ -241,11 +241,12 @@ class SpeakFlowUI(NSObject):
     def _styled_btn(self, parent, title, x, y, w, h, color=None, font=None):
         """Create a styled button with visible colors on dark background."""
         btn = NSButton.alloc().initWithFrame_(NSMakeRect(x, y, w, h))
-        btn.setBezelStyle_(NSBezelStyleRounded)
-        btn.setWantsLayer_(True)
+        btn.setButtonType_(0)  # momentaryPushIn
         btn.setBordered_(False)
+        btn.setWantsLayer_(True)
+        btn.setFocusRingType_(1)  # NSFocusRingTypeNone
         bg = color or _ACCENT()
-        btn.layer().setCornerRadius_(6)
+        btn.layer().setCornerRadius_(8)
         btn.layer().setBackgroundColor_(bg.CGColor())
         self._set_btn_title(btn, title, font)
         parent.addSubview_(btn)
@@ -266,10 +267,11 @@ class SpeakFlowUI(NSObject):
     def _ghost_btn(self, parent, title, x, y, w, h, font=None):
         """Create a subtle secondary button with border, for non-primary actions."""
         btn = NSButton.alloc().initWithFrame_(NSMakeRect(x, y, w, h))
-        btn.setBezelStyle_(NSBezelStyleRounded)
-        btn.setWantsLayer_(True)
+        btn.setButtonType_(0)
         btn.setBordered_(False)
-        btn.layer().setCornerRadius_(6)
+        btn.setWantsLayer_(True)
+        btn.setFocusRingType_(1)
+        btn.layer().setCornerRadius_(8)
         btn.layer().setBackgroundColor_(_SEC_BG().CGColor())
         btn.layer().setBorderWidth_(1)
         btn.layer().setBorderColor_(_SEC_EDGE().CGColor())
