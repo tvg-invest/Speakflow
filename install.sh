@@ -117,11 +117,11 @@ if [ "$HAS_KEY" = "no" ]; then
     echo ""
     read -p "  Enter your OpenAI API key (or press Enter to skip): " API_KEY < /dev/tty
     if [ -n "$API_KEY" ]; then
-        python3 -c "
+        SPEAKFLOW_API_KEY="$API_KEY" python3 -c "
 import json, os
 p = '$CONFIG'
 d = json.load(open(p)) if os.path.exists(p) else {}
-d['openai_api_key'] = '$API_KEY'
+d['openai_api_key'] = os.environ['SPEAKFLOW_API_KEY']
 json.dump(d, open(p, 'w'), indent=2)
 "
         echo "  API key saved."

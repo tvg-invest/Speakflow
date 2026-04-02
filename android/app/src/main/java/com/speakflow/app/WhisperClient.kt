@@ -11,10 +11,12 @@ import java.util.concurrent.TimeUnit
 
 class WhisperClient(private val apiKey: String) {
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .build()
+    companion object {
+        val client: OkHttpClient = OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .build()
+    }
 
     fun transcribe(wavData: ByteArray, language: String): String {
         val body = MultipartBody.Builder()

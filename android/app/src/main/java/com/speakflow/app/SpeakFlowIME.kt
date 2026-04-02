@@ -135,9 +135,16 @@ class SpeakFlowIME : InputMethodService() {
 
         recordingThread = thread {
             val buffer = ByteArray(bufSize)
+            val maxBytes = SAMPLE_RATE * 2 * 120 // 120 seconds max
             while (recording) {
                 val read = audioRecord?.read(buffer, 0, buffer.size) ?: -1
-                if (read > 0) synchronized(audioBuffer) { audioBuffer.write(buffer, 0, read) }
+                if (read > 0) synchronized(audioBuffer) {
+                    audioBuffer.write(buffer, 0, read)
+                    if (audioBuffer.size() >= maxBytes) {
+                        recording = false
+                        mainHandler.post { stopRecording(); processAudio() }
+                    }
+                }
             }
         }
     }
@@ -199,6 +206,11 @@ class SpeakFlowIME : InputMethodService() {
                 mainHandler.post { micBtn.alpha = 1.0f }
             }
         }
+    }
+
+    override fun onDestroy() {
+        if (recording) stopRecording()
+        super.onDestroy()
     }
 
     private fun resetUI(status: String, colorRes: Int) {

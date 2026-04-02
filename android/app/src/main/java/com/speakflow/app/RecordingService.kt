@@ -117,9 +117,16 @@ class RecordingService : Service() {
 
         recordingThread = thread {
             val buffer = ByteArray(bufSize)
+            val maxBytes = SAMPLE_RATE * 2 * 120 // 120 seconds max
             while (isRecording) {
                 val read = audioRecord?.read(buffer, 0, buffer.size) ?: -1
-                if (read > 0) synchronized(audioBuffer) { audioBuffer.write(buffer, 0, read) }
+                if (read > 0) synchronized(audioBuffer) {
+                    audioBuffer.write(buffer, 0, read)
+                    if (audioBuffer.size() >= maxBytes) {
+                        isRecording = false
+                        mainHandler.post { stopRecording(); processAudio() }
+                    }
+                }
             }
         }
     }

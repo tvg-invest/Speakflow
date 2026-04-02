@@ -102,6 +102,11 @@ class MainActivity : AppCompatActivity() {
         saveSettings()
     }
 
+    override fun onDestroy() {
+        if (recording) stopRecording()
+        super.onDestroy()
+    }
+
     private fun requestPermissions() {
         val needed = mutableListOf<String>()
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
@@ -216,11 +221,16 @@ class MainActivity : AppCompatActivity() {
 
         recordingThread = thread {
             val buffer = ByteArray(bufSize)
+            val maxBytes = SAMPLE_RATE * 2 * 120 // 120 seconds max
             while (recording) {
                 val read = audioRecord?.read(buffer, 0, buffer.size) ?: -1
                 if (read > 0) {
                     synchronized(audioBuffer) {
                         audioBuffer.write(buffer, 0, read)
+                        if (audioBuffer.size() >= maxBytes) {
+                            recording = false
+                            runOnUiThread { stopRecording(); processAudio() }
+                        }
                     }
                 }
             }

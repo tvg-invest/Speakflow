@@ -138,14 +138,17 @@ class AudioRecorder:
         -------
         bytes
             A complete WAV file (RIFF header + PCM data) in memory.
-
-        Raises
-        ------
-        AudioRecorderError
-            If no recording is in progress.
+            If the recording already stopped (e.g. max duration reached),
+            returns whatever audio was captured.
         """
         if not self._recording:
-            raise AudioRecorderError("No recording in progress.")
+            # Already stopped (max duration or error) — return captured audio
+            with self._lock:
+                frames = list(self._frames)
+            if not frames:
+                return self._empty_wav()
+            audio = np.concatenate(frames, axis=0)
+            return self._to_wav_bytes(audio)
 
         self._stop_event.set()
 

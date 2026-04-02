@@ -749,6 +749,13 @@ class SpeakFlowUI(NSObject):
             def handler(event):
                 if not self._capturing:
                     return event
+                # Escape key (keyDown) cancels capture
+                if event.type() == 10 and event.keyCode() == 53:
+                    self._capturing = False
+                    NSEvent.removeMonitor_(self._key_monitor)
+                    self._key_monitor = None
+                    self._cancel_capture()
+                    return None
                 if event.type() != 12:  # Only NSFlagsChanged
                     return event
                 mods = _get_mods(event.modifierFlags())
@@ -767,7 +774,7 @@ class SpeakFlowUI(NSObject):
                 return event
 
             self._key_monitor = NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
-                1 << 12, handler)  # NSFlagsChangedMask only
+                (1 << 10) | (1 << 12), handler)  # keyDown + flagsChanged
         except Exception:
             logger.error("Modifier capture error:\n%s", traceback.format_exc())
             self._capturing = False
@@ -842,10 +849,18 @@ class SpeakFlowUI(NSObject):
 
                 if event_type == 10:
                     self._capture_single_mod = None
-                    mods = _get_mods(event.modifierFlags())
                     keycode = event.keyCode()
                     key_name = _KEYCODE_MAP.get(keycode)
 
+                    # Escape cancels capture
+                    if key_name == "escape":
+                        self._capturing = False
+                        NSEvent.removeMonitor_(self._key_monitor)
+                        self._key_monitor = None
+                        self._cancel_capture()
+                        return None
+
+                    mods = _get_mods(event.modifierFlags())
                     if key_name and (mods or key_name in _STANDALONE_KEYS):
                         new_hotkey = "+".join(mods + [key_name])
                         self._capturing = False
@@ -862,6 +877,24 @@ class SpeakFlowUI(NSObject):
         except Exception:
             logger.error("captureHotkey error:\n%s", traceback.format_exc())
             self._capturing = False
+
+    @objc.python_method
+    def _cancel_capture(self):
+        """Cancel hotkey capture and restore UI."""
+        self._capturing = False
+        if self._capture_target == "main":
+            hotkey_text = self.config.hotkey
+            if is_modifier_only(hotkey_text):
+                hotkey_text += " (hold)"
+            self.hotkey_display.setStringValue_(hotkey_text)
+            self.hotkey_display.setTextColor_(_GOLD())
+            self.hotkey_btn.setTitle_("Change")
+            self.hotkey_btn.setEnabled_(True)
+        else:
+            self.ctx_hotkey_display.setStringValue_(f"{self.config.context_hotkey} (hold)")
+            self.ctx_hotkey_display.setTextColor_(_PURPLE())
+            self.ctx_hotkey_btn.setTitle_("Change")
+            self.ctx_hotkey_btn.setEnabled_(True)
 
     @objc.python_method
     def _finish_capture(self, new_hotkey):
@@ -1095,9 +1128,9 @@ class SpeakFlowUI(NSObject):
 
         selection = pb.stringForType_("public.utf8-plain-text") or ""
 
-        # Restore original clipboard
+        # Restore original clipboard (clear even if original was empty)
+        pb.clearContents()
         if original:
-            pb.clearContents()
             pb.setString_forType_(original, "public.utf8-plain-text")
 
         return selection
@@ -1328,8 +1361,11 @@ class SpeakFlowUI(NSObject):
         self.status_label.setStringValue_(msg)
         self.status_label.setTextColor_(_RED())
         self._status_dot.layer().setBackgroundColor_(_RED().CGColor())
+        self.rec_button.setTitle_("Start Recording")
+        self.status_item.setTitle_("SF")
         if self.config.sound_feedback:
             play_error_sound()
+        self._hide_float()
         self._set_float_color(_RED())
         self._float_win.orderFront_(None)
 
