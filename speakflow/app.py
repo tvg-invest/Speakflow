@@ -568,7 +568,8 @@ class SpeakFlowUI(NSObject):
         self._float_win.setLevel_(NSFloatingWindowLevel)
         self._float_win.setOpaque_(False)
         self._float_win.setBackgroundColor_(NSColor.clearColor())
-        self._float_win.setIgnoresMouseEvents_(True)
+        self._float_win.setIgnoresMouseEvents_(False)
+        self._float_win.setMovableByWindowBackground_(True)
         self._float_win.setCollectionBehavior_(1 << 1 | 1 << 4)
         self._float_win.setReleasedWhenClosed_(False)
         self._float_win.setHasShadow_(True)
@@ -585,7 +586,7 @@ class SpeakFlowUI(NSObject):
             NSColor.colorWithCalibratedRed_green_blue_alpha_(0.4, 0.4, 0.45, 0.4).CGColor())
 
         dot_sz = 6
-        self._float_dot = self._dot(blur, 12, (fh - dot_sz) / 2, dot_sz, _RED())
+        self._float_dot = self._dot(blur, 12, (fh - dot_sz) / 2, dot_sz, _ACCENT())
 
         bars_x = 12 + dot_sz + 8
         self._float_bars = []
@@ -596,12 +597,33 @@ class SpeakFlowUI(NSObject):
             bar = NSView.alloc().initWithFrame_(NSMakeRect(bx, by, self._float_bar_w, h))
             bar.setWantsLayer_(True)
             bar.layer().setCornerRadius_(self._float_bar_w / 2)
-            bar.layer().setBackgroundColor_(_RED().CGColor())
+            bar.layer().setBackgroundColor_(_ACCENT().CGColor())
             blur.addSubview_(bar)
             self._float_bars.append(bar)
 
+        # Clickable button over the entire float
+        click_btn = NSButton.alloc().initWithFrame_(NSMakeRect(0, 0, fw, fh))
+        click_btn.setTransparent_(True)
+        click_btn.setTarget_(self)
+        click_btn.setAction_("floatClicked:")
+        blur.addSubview_(click_btn)
+
         self._float_win.contentView().addSubview_(blur)
         self._float_fh = fh
+
+        # Always visible in idle state
+        self._float_win.orderFront_(None)
+
+    def floatClicked_(self, sender):
+        if self._processing:
+            return
+        if self._recording:
+            if self._context_mode:
+                self._on_context_deactivate()
+            else:
+                self._on_deactivate()
+        else:
+            self._on_activate()
 
     def updateLevels_(self, timer):
         self._anim_tick += 1
@@ -644,6 +666,7 @@ class SpeakFlowUI(NSObject):
 
     @objc.python_method
     def _hide_float(self):
+        """Reset float to idle state (always visible)."""
         self._float_mode = None
         if self._level_timer is not None:
             self._level_timer.invalidate()
@@ -654,7 +677,8 @@ class SpeakFlowUI(NSObject):
         for bar in self._float_bars:
             old_x = bar.frame().origin.x
             bar.setFrame_(NSMakeRect(old_x, (fh - min_h) / 2, bw, min_h))
-        self._float_win.orderOut_(None)
+        self._set_float_color(_ACCENT())
+        self._float_win.orderFront_(None)
 
     # ── History window ──────────────────────────────────────────
 
@@ -1365,9 +1389,18 @@ class SpeakFlowUI(NSObject):
         self.status_item.setTitle_("SF")
         if self.config.sound_feedback:
             play_error_sound()
-        self._hide_float()
+        # Show error color on float, stop animation
+        self._float_mode = None
+        if self._level_timer is not None:
+            self._level_timer.invalidate()
+            self._level_timer = None
+        fh = self._float_fh
+        bw = self._float_bar_w
+        min_h = self._float_min_h
+        for bar in self._float_bars:
+            old_x = bar.frame().origin.x
+            bar.setFrame_(NSMakeRect(old_x, (fh - min_h) / 2, bw, min_h))
         self._set_float_color(_RED())
-        self._float_win.orderFront_(None)
 
         def _auto_clear():
             # Only clear the error if no new recording/processing has started.
