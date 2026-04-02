@@ -62,12 +62,14 @@ class AudioRecorder:
         silence_timeout: float = 2.0,
         max_duration: float = 120,
         silence_threshold_factor: float = 1.5,
+        device: int | str | None = None,
     ) -> None:
         self.sample_rate = sample_rate
         self.channels = channels
         self.silence_timeout = silence_timeout
         self.max_duration = max_duration
         self.silence_threshold_factor = silence_threshold_factor
+        self.device = device  # None = system default
 
         # Public callbacks -- set by the caller.
         self.on_silence_detected: callable | None = None
@@ -94,6 +96,18 @@ class AudioRecorder:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def list_input_devices() -> list[dict]:
+        """Return a list of available input devices as {id, name} dicts."""
+        devices = sd.query_devices()
+        if isinstance(devices, dict):
+            devices = [devices]
+        result = []
+        for i, d in enumerate(devices):
+            if d.get("max_input_channels", 0) > 0:
+                result.append({"id": i, "name": d["name"]})
+        return result
 
     @property
     def is_recording(self) -> bool:
@@ -262,6 +276,7 @@ class AudioRecorder:
                     channels=self.channels,
                     dtype="int16",
                     blocksize=self._CHUNK_FRAMES,
+                    device=self.device,
                 )
                 stream.start()
                 return stream

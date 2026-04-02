@@ -140,6 +140,7 @@ class SpeakFlowUI(NSObject):
         self.audio_recorder = AudioRecorder(
             max_duration=self.config.max_recording_seconds,
             silence_timeout=self.config.silence_timeout,
+            device=self.config.microphone,
         )
         self.audio_recorder.on_silence_detected = self._on_silence
         self.audio_recorder.on_error = self._on_record_error
@@ -291,7 +292,7 @@ class SpeakFlowUI(NSObject):
 
     @objc.python_method
     def _build_window(self):
-        W, H = 460, 794
+        W, H = 460, 828
         screen = NSScreen.mainScreen().frame()
         cx = (screen.size.width - W) / 2
         cy = (screen.size.height - H) / 2
@@ -340,9 +341,9 @@ class SpeakFlowUI(NSObject):
         sc.addSubview_(self.rec_button)
         y -= card_h + 16
 
-        # ── Settings card (9 rows) ──
+        # ── Settings card (10 rows) ──
         row_h = 34
-        num_rows = 9
+        num_rows = 10
         set_h = 44 + num_rows * row_h + 10
         stc = self._card(v, pad, y - set_h, cw, set_h)
 
@@ -425,7 +426,24 @@ class SpeakFlowUI(NSObject):
         stc.addSubview_(self.lang_popup)
         ry -= row_h
 
-        # Row 3 — AI Cleanup
+        # Row — Microphone
+        self._label(stc, "Microphone", lx, ry + 6, 100, 24,
+                    NSFont.systemFontOfSize_(13), _DIM())
+        self.mic_popup = NSPopUpButton.alloc().initWithFrame_pullsDown_(
+            NSMakeRect(rx - 220, ry + 5, 220, 26), False)
+        self.mic_popup.addItemWithTitle_("System Default")
+        self._mic_devices = AudioRecorder.list_input_devices()
+        saved_mic = self.config.microphone
+        for dev in self._mic_devices:
+            self.mic_popup.addItemWithTitle_(dev["name"])
+            if saved_mic is not None and dev["id"] == saved_mic:
+                self.mic_popup.selectItemWithTitle_(dev["name"])
+        self.mic_popup.setTarget_(self)
+        self.mic_popup.setAction_("micChanged:")
+        stc.addSubview_(self.mic_popup)
+        ry -= row_h
+
+        # Row — AI Cleanup
         self._label(stc, "AI Cleanup", lx, ry + 6, 120, 24,
                     NSFont.systemFontOfSize_(13), _DIM())
         self.cleanup_btn = NSButton.alloc().initWithFrame_(
@@ -958,6 +976,17 @@ class SpeakFlowUI(NSObject):
         self.status_label.setTextColor_(_GREEN())
         logger.info("API key updated.")
         threading.Timer(2.0, lambda: self._run_on_main(self._ui_ready)).start()
+
+    def micChanged_(self, sender):
+        idx = sender.indexOfSelectedItem()
+        if idx == 0:
+            # System Default
+            self.config.microphone = None
+            self.audio_recorder.device = None
+        else:
+            dev = self._mic_devices[idx - 1]
+            self.config.microphone = dev["id"]
+            self.audio_recorder.device = dev["id"]
 
     def languageChanged_(self, sender):
         name = sender.titleOfSelectedItem()

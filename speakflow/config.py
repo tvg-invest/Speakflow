@@ -24,6 +24,7 @@ DEFAULTS: dict[str, Any] = {
     "sound_volume": 0.3,
     "context_hotkey": "alt",
     "context_model": "gpt-4o",
+    "microphone": None,  # None = system default, or device index
 }
 
 
@@ -185,6 +186,14 @@ class Config:
     @context_model.setter
     def context_model(self, value: str) -> None:
         self.set("context_model", value)
+
+    @property
+    def microphone(self):
+        return self._data.get("microphone")
+
+    @microphone.setter
+    def microphone(self, value) -> None:
+        self.set("microphone", value)
 
     def __repr__(self) -> str:
         return f"Config({self._data!r})"
