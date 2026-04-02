@@ -2,6 +2,7 @@
 
 import json
 import logging
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 HISTORY_FILE = Path.home() / ".speakflow" / "history.json"
 MAX_ENTRIES = 30
+_lock = threading.Lock()
 
 
 def load() -> list[dict[str, Any]]:
@@ -24,16 +26,17 @@ def load() -> list[dict[str, Any]]:
 
 
 def add(text: str, app_name: str = "", language: str = "") -> dict[str, Any]:
-    entries = load()
-    entry = {
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "text": text,
-        "app": app_name,
-        "language": language,
-    }
-    entries.insert(0, entry)
-    entries = entries[:MAX_ENTRIES]
-    _save(entries)
+    with _lock:
+        entries = load()
+        entry = {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "text": text,
+            "app": app_name,
+            "language": language,
+        }
+        entries.insert(0, entry)
+        entries = entries[:MAX_ENTRIES]
+        _save(entries)
     return entry
 
 

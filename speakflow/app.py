@@ -139,6 +139,7 @@ class SpeakFlowUI(NSObject):
         self._stop_lock = threading.Lock()
         self._dispatcher = MainThreadDispatcher.alloc().init()
         self._history_win = None
+        self._key_monitor = None
 
         # Core components
         self.audio_recorder = AudioRecorder(
@@ -219,6 +220,18 @@ class SpeakFlowUI(NSObject):
         NSApp.activateIgnoringOtherApps_(True)
 
     # ── Helpers ─────────────────────────────────────────────────
+
+    @objc.python_method
+    def _remove_key_monitor(self):
+        """Safely remove event monitor and reset capture state."""
+        try:
+            if self._key_monitor is not None:
+                NSEvent.removeMonitor_(self._key_monitor)
+        except Exception:
+            logger.warning("Failed to remove event monitor", exc_info=True)
+        finally:
+            self._key_monitor = None
+            self._capturing = False
 
     @objc.python_method
     def _label(self, parent, text, x, y, w, h, font=None, color=None, center=False, selectable=False):
@@ -850,9 +863,7 @@ class SpeakFlowUI(NSObject):
                     return event
                 # Escape key (keyDown) cancels capture
                 if event.type() == 10 and event.keyCode() == 53:
-                    self._capturing = False
-                    NSEvent.removeMonitor_(self._key_monitor)
-                    self._key_monitor = None
+                    self._remove_key_monitor()
                     self._cancel_capture()
                     return None
                 if event.type() != 12:  # Only NSFlagsChanged
@@ -863,9 +874,7 @@ class SpeakFlowUI(NSObject):
                 elif len(mods) == 0 and self._capture_single_mod is not None:
                     mod = self._capture_single_mod
                     self._capture_single_mod = None
-                    self._capturing = False
-                    NSEvent.removeMonitor_(self._key_monitor)
-                    self._key_monitor = None
+                    self._remove_key_monitor()
                     self._finish_capture(mod)
                     return None
                 elif len(mods) > 1:
@@ -941,9 +950,7 @@ class SpeakFlowUI(NSObject):
                     elif len(mods) == 0 and self._capture_single_mod is not None:
                         mod = self._capture_single_mod
                         self._capture_single_mod = None
-                        self._capturing = False
-                        NSEvent.removeMonitor_(self._key_monitor)
-                        self._key_monitor = None
+                        self._remove_key_monitor()
                         self._finish_capture(mod)
                         return None
                     elif len(mods) > 1:
@@ -957,18 +964,14 @@ class SpeakFlowUI(NSObject):
 
                     # Escape cancels capture
                     if key_name == "escape":
-                        self._capturing = False
-                        NSEvent.removeMonitor_(self._key_monitor)
-                        self._key_monitor = None
+                        self._remove_key_monitor()
                         self._cancel_capture()
                         return None
 
                     mods = _get_mods(event.modifierFlags())
                     if key_name and (mods or key_name in _STANDALONE_KEYS):
                         new_hotkey = "+".join(mods + [key_name])
-                        self._capturing = False
-                        NSEvent.removeMonitor_(self._key_monitor)
-                        self._key_monitor = None
+                        self._remove_key_monitor()
                         self._finish_capture(new_hotkey)
                         return None
                     return event
@@ -1237,6 +1240,8 @@ class SpeakFlowUI(NSObject):
             # Re-check: deactivate may have raced us during setup
             if not self._recording:
                 self._float_triggered = False
+                self._processing = False
+                self._run_on_main(self._ui_ready)
                 return
             self.audio_recorder.start_recording()
             # Final check: if deactivate raced after start, stop immediately
@@ -1246,6 +1251,8 @@ class SpeakFlowUI(NSObject):
                 except Exception:
                     pass
                 self._float_triggered = False
+                self._processing = False
+                self._run_on_main(self._ui_ready)
                 return
             logger.info("Recording started (app: %s).", self._active_app)
         except Exception:
@@ -1274,10 +1281,11 @@ class SpeakFlowUI(NSObject):
     def _on_record_error(self, msg):
         """Called from the recording thread when it crashes."""
         logger.error("Recording thread error: %s", msg)
-        self._recording = False
-        self._processing = False
-        self._context_mode = False
-        self._float_triggered = False
+        with self._stop_lock:
+            self._recording = False
+            self._processing = False
+            self._context_mode = False
+            self._float_triggered = False
         self._run_on_main(lambda: self._ui_error(msg))
 
     # ── Context mode (select + voice → AI response) ────────────
@@ -1330,6 +1338,8 @@ class SpeakFlowUI(NSObject):
         # Re-check: deactivate may have raced us during _grab_selection
         if not self._recording:
             self._context_mode = False
+            self._processing = False
+            self._run_on_main(self._ui_ready)
             return
         logger.info("Context mode: grabbed %d chars from %s.",
                     len(self._selected_text), self._active_app)
@@ -1346,6 +1356,8 @@ class SpeakFlowUI(NSObject):
                     pass
             if not self._recording:
                 self._context_mode = False
+                self._processing = False
+                self._run_on_main(self._ui_ready)
                 return
             self.audio_recorder.start_recording()
             # Final check: if deactivate raced after start, stop immediately
@@ -1355,6 +1367,8 @@ class SpeakFlowUI(NSObject):
                 except Exception:
                     pass
                 self._context_mode = False
+                self._processing = False
+                self._run_on_main(self._ui_ready)
                 return
         except Exception:
             logger.error("Context record start failed:\n%s", traceback.format_exc())
