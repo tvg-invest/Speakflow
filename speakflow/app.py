@@ -184,16 +184,15 @@ class SpeakFlowUI(NSObject):
 
     @objc.python_method
     def _check_permissions(self):
-        # Check without prompting first; only prompt if not yet trusted.
+        # Silent check — never trigger the system dialog (it reappears
+        # after every update because macOS revokes trust when code changes).
         trusted = ApplicationServices.AXIsProcessTrustedWithOptions(
             {ApplicationServices.kAXTrustedCheckOptionPrompt: False}
         )
         if not trusted:
-            logger.warning("Accessibility not granted — prompting user.")
-            ApplicationServices.AXIsProcessTrustedWithOptions(
-                {ApplicationServices.kAXTrustedCheckOptionPrompt: True}
-            )
-            self.status_label.setStringValue_("Grant Accessibility in System Settings")
+            logger.warning("Accessibility not granted.")
+            self.status_label.setStringValue_(
+                "Open System Settings → Privacy → Accessibility → enable SpeakFlow")
             self.status_label.setTextColor_(_ORANGE())
             return
         AVCaptureDevice = objc.lookUpClass('AVCaptureDevice')
