@@ -1228,12 +1228,31 @@ class SpeakFlowUI(NSObject):
         try:
             if self.config.sound_feedback:
                 play_start_sound()
+            # Defensive: clean up leaked recorder state from previous session
+            if self.audio_recorder.is_recording:
+                try:
+                    self.audio_recorder.stop_recording()
+                except Exception:
+                    pass
+            # Re-check: deactivate may have raced us during setup
+            if not self._recording:
+                self._float_triggered = False
+                return
             self.audio_recorder.start_recording()
+            # Final check: if deactivate raced after start, stop immediately
+            if not self._recording:
+                try:
+                    self.audio_recorder.stop_recording()
+                except Exception:
+                    pass
+                self._float_triggered = False
+                return
             logger.info("Recording started (app: %s).", self._active_app)
         except Exception:
             logger.error("Record start failed:\n%s", traceback.format_exc())
             self._recording = False
             self._processing = False
+            self._float_triggered = False
             self._run_on_main(self._ui_ready)
 
     @objc.python_method
@@ -1258,6 +1277,7 @@ class SpeakFlowUI(NSObject):
         self._recording = False
         self._processing = False
         self._context_mode = False
+        self._float_triggered = False
         self._run_on_main(lambda: self._ui_error(msg))
 
     # ── Context mode (select + voice → AI response) ────────────
@@ -1307,6 +1327,10 @@ class SpeakFlowUI(NSObject):
             self._context_mode = True
         self._active_app = self._get_active_app()
         self._selected_text = self._grab_selection()
+        # Re-check: deactivate may have raced us during _grab_selection
+        if not self._recording:
+            self._context_mode = False
+            return
         logger.info("Context mode: grabbed %d chars from %s.",
                     len(self._selected_text), self._active_app)
         self._run_on_main(lambda: self._show_float("recording", _PURPLE()))
@@ -1314,7 +1338,24 @@ class SpeakFlowUI(NSObject):
         try:
             if self.config.sound_feedback:
                 play_start_sound()
+            # Defensive: clean up leaked recorder state
+            if self.audio_recorder.is_recording:
+                try:
+                    self.audio_recorder.stop_recording()
+                except Exception:
+                    pass
+            if not self._recording:
+                self._context_mode = False
+                return
             self.audio_recorder.start_recording()
+            # Final check: if deactivate raced after start, stop immediately
+            if not self._recording:
+                try:
+                    self.audio_recorder.stop_recording()
+                except Exception:
+                    pass
+                self._context_mode = False
+                return
         except Exception:
             logger.error("Context record start failed:\n%s", traceback.format_exc())
             self._recording = False
@@ -1407,13 +1448,15 @@ class SpeakFlowUI(NSObject):
             audio_data = self.audio_recorder.stop_recording()
             if audio_data is None or len(audio_data) < 16044:
                 logger.debug("Audio too short, discarding.")
-                self._run_on_main(self._ui_ready)
                 self._processing = False
+                self._float_triggered = False
+                self._run_on_main(self._ui_ready)
                 return
             threading.Thread(target=self._transcribe_and_insert, args=(audio_data,), daemon=True).start()
         except Exception:
             logger.warning("Stop recording: %s", traceback.format_exc().splitlines()[-1])
             self._processing = False
+            self._float_triggered = False
             self._run_on_main(self._ui_ready)
 
     @objc.python_method
