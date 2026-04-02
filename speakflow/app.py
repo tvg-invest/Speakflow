@@ -14,7 +14,7 @@ import objc
 import Quartz
 from AppKit import (
     NSApplication, NSApp, NSApplicationActivationPolicyRegular,
-    NSWindow, NSBackingStoreBuffered,
+    NSWindow, NSPanel, NSBackingStoreBuffered,
     NSMakeRect, NSTextField, NSButton, NSFont,
     NSColor, NSPopUpButton, NSStatusBar, NSVariableStatusItemLength,
     NSMenu, NSMenuItem, NSObject,
@@ -75,6 +75,8 @@ _GOLD      = lambda: NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.80,
 _PURPLE    = lambda: NSColor.colorWithCalibratedRed_green_blue_alpha_(0.65, 0.40, 1.0, 1.0)
 _DIM       = lambda: NSColor.colorWithCalibratedRed_green_blue_alpha_(0.50, 0.50, 0.56, 1.0)
 _WHITE     = lambda: NSColor.whiteColor()
+_SEC_BG    = lambda: NSColor.colorWithCalibratedRed_green_blue_alpha_(0.18, 0.18, 0.23, 1.0)
+_SEC_EDGE  = lambda: NSColor.colorWithCalibratedRed_green_blue_alpha_(0.30, 0.30, 0.36, 1.0)
 
 
 class MainThreadDispatcher(NSObject):
@@ -187,7 +189,7 @@ class SpeakFlowUI(NSObject):
         )
         if not trusted:
             logger.warning("Accessibility not granted — prompting user.")
-            self.status_label.setStringValue_("Giv Accessibility-tilladelse i System Settings")
+            self.status_label.setStringValue_("Grant Accessibility in System Settings")
             self.status_label.setTextColor_(_ORANGE())
             return
         AVCaptureDevice = objc.lookUpClass('AVCaptureDevice')
@@ -197,13 +199,13 @@ class SpeakFlowUI(NSObject):
             AVCaptureDevice.requestAccessForMediaType_completionHandler_('soun', lambda granted: None)
         elif mic_status == 2:
             logger.warning("Microphone access denied.")
-            self.status_label.setStringValue_("Giv mikrofon-tilladelse i System Settings")
+            self.status_label.setStringValue_("Grant Microphone access in System Settings")
             self.status_label.setTextColor_(_ORANGE())
 
     @objc.python_method
     def _check_api_key(self):
         if not self.config.openai_api_key:
-            self.status_label.setStringValue_("Enter your OpenAI API key in Settings ↓")
+            self.status_label.setStringValue_("Add your API key below to get started")
             self.status_label.setTextColor_(_ORANGE())
             logger.warning("No OpenAI API key configured.")
 
@@ -246,15 +248,31 @@ class SpeakFlowUI(NSObject):
         return btn
 
     @objc.python_method
-    def _set_btn_title(self, btn, title, font=None):
-        """Set button title with white text."""
+    def _set_btn_title(self, btn, title, font=None, color=None):
+        """Set button title with custom or white text."""
         attrs = {
             NSFontAttributeName: font or NSFont.systemFontOfSize_weight_(12, NSFontWeightMedium),
-            NSForegroundColorAttributeName: _WHITE(),
+            NSForegroundColorAttributeName: color or _WHITE(),
         }
         btn.setAttributedTitle_(
             NSAttributedString.alloc().initWithString_attributes_(title, attrs)
         )
+
+    @objc.python_method
+    def _ghost_btn(self, parent, title, x, y, w, h, font=None):
+        """Create a subtle secondary button with border, for non-primary actions."""
+        btn = NSButton.alloc().initWithFrame_(NSMakeRect(x, y, w, h))
+        btn.setBezelStyle_(NSBezelStyleRounded)
+        btn.setWantsLayer_(True)
+        btn.setBordered_(False)
+        btn.layer().setCornerRadius_(6)
+        btn.layer().setBackgroundColor_(_SEC_BG().CGColor())
+        btn.layer().setBorderWidth_(1)
+        btn.layer().setBorderColor_(_SEC_EDGE().CGColor())
+        f = font or NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium)
+        self._set_btn_title(btn, title, f, color=_DIM())
+        parent.addSubview_(btn)
+        return btn
 
     @objc.python_method
     def _card(self, parent, x, y, w, h):
@@ -356,9 +374,10 @@ class SpeakFlowUI(NSObject):
                                         NSFont.systemFontOfSize_weight_(17, NSFontWeightSemibold),
                                         _ACCENT(), False)
 
-        bw, bh = 170, 32
+        bw, bh = 180, 34
         self.rec_button = self._styled_btn(sc, "Start Recording",
-                                           (cw - bw) / 2, 16, bw, bh)
+                                           (cw - bw) / 2, 14, bw, bh,
+                                           color=_GREEN())
         self.rec_button.setTarget_(self)
         self.rec_button.setAction_("toggleRecording:")
         y -= card_h + 16
@@ -407,9 +426,8 @@ class SpeakFlowUI(NSObject):
         self.hotkey_display = self._label(stc, hotkey_text, lx + 80, ry + 6, cw - 230, 24,
                                           NSFont.systemFontOfSize_weight_(13, NSFontWeightSemibold),
                                           _GOLD())
-        self.hotkey_btn = self._styled_btn(stc, "Change",
-                                           rx - 90, ry + 5, 90, 26,
-                                           font=NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium))
+        self.hotkey_btn = self._ghost_btn(stc, "Change",
+                                         rx - 90, ry + 5, 90, 26)
         self.hotkey_btn.setTarget_(self)
         self.hotkey_btn.setAction_("captureHotkey:")
         ry -= row_h
@@ -421,9 +439,8 @@ class SpeakFlowUI(NSObject):
         self.ctx_hotkey_display = self._label(stc, ctx_text, lx + 100, ry + 6, cw - 250, 24,
                                               NSFont.systemFontOfSize_weight_(13, NSFontWeightSemibold),
                                               _PURPLE())
-        self.ctx_hotkey_btn = self._styled_btn(stc, "Change",
-                                               rx - 90, ry + 5, 90, 26,
-                                               font=NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium))
+        self.ctx_hotkey_btn = self._ghost_btn(stc, "Change",
+                                             rx - 90, ry + 5, 90, 26)
         self.ctx_hotkey_btn.setTarget_(self)
         self.ctx_hotkey_btn.setAction_("captureContextHotkey:")
         ry -= row_h
@@ -442,7 +459,9 @@ class SpeakFlowUI(NSObject):
         self.lang_popup.setWantsLayer_(True)
         self.lang_popup.setBordered_(False)
         self.lang_popup.layer().setCornerRadius_(6)
-        self.lang_popup.layer().setBackgroundColor_(_ACCENT().CGColor())
+        self.lang_popup.layer().setBackgroundColor_(_SEC_BG().CGColor())
+        self.lang_popup.layer().setBorderWidth_(1)
+        self.lang_popup.layer().setBorderColor_(_SEC_EDGE().CGColor())
         stc.addSubview_(self.lang_popup)
         ry -= row_h
 
@@ -463,7 +482,9 @@ class SpeakFlowUI(NSObject):
         self.mic_popup.setWantsLayer_(True)
         self.mic_popup.setBordered_(False)
         self.mic_popup.layer().setCornerRadius_(6)
-        self.mic_popup.layer().setBackgroundColor_(_ACCENT().CGColor())
+        self.mic_popup.layer().setBackgroundColor_(_SEC_BG().CGColor())
+        self.mic_popup.layer().setBorderWidth_(1)
+        self.mic_popup.layer().setBorderColor_(_SEC_EDGE().CGColor())
         stc.addSubview_(self.mic_popup)
         ry -= row_h
 
@@ -562,15 +583,13 @@ class SpeakFlowUI(NSObject):
         total = btn_w * 2 + gap
         bx = (W - total) / 2
 
-        hist_btn = self._styled_btn(v, "View History",
-                                    bx, y - 4, btn_w, 26,
-                                    font=NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium))
+        hist_btn = self._ghost_btn(v, "View History",
+                                   bx, y - 4, btn_w, 26)
         hist_btn.setTarget_(self)
         hist_btn.setAction_("showHistory:")
 
-        self._update_btn = self._styled_btn(v, "Check for Updates",
-                                            bx + btn_w + gap, y - 4, btn_w, 26,
-                                            font=NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium))
+        self._update_btn = self._ghost_btn(v, "Check for Updates",
+                                          bx + btn_w + gap, y - 4, btn_w, 26)
         self._update_btn.setTarget_(self)
         self._update_btn.setAction_("checkForUpdates:")
         y -= 30
@@ -599,8 +618,10 @@ class SpeakFlowUI(NSObject):
         x = (full.size.width - fw) / 2
         y = dock_top + 10
 
-        self._float_win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-            NSMakeRect(x, y, fw, fh), 0, NSBackingStoreBuffered, False)
+        # NSPanel with non-activating mask (1 << 7) so clicking doesn't
+        # bring the main window to front or activate the app.
+        self._float_win = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
+            NSMakeRect(x, y, fw, fh), 1 << 7, NSBackingStoreBuffered, False)
         self._float_win.setLevel_(NSFloatingWindowLevel)
         self._float_win.setOpaque_(False)
         self._float_win.setBackgroundColor_(NSColor.clearColor())
@@ -609,6 +630,9 @@ class SpeakFlowUI(NSObject):
         self._float_win.setCollectionBehavior_(1 << 1 | 1 << 4)
         self._float_win.setReleasedWhenClosed_(False)
         self._float_win.setHasShadow_(True)
+        self._float_win.setFloatingPanel_(True)
+        self._float_win.setBecomesKeyOnlyIfNeeded_(True)
+        self._float_win.setHidesOnDeactivate_(False)
 
         blur = NSVisualEffectView.alloc().initWithFrame_(NSMakeRect(0, 0, fw, fh))
         blur.setMaterial_(11)
@@ -796,7 +820,8 @@ class SpeakFlowUI(NSObject):
             self.ctx_hotkey_display.setStringValue_("Press a modifier...")
             self.ctx_hotkey_display.setTextColor_(_ACCENT())
             self._set_btn_title(self.ctx_hotkey_btn, "Listening...",
-                                NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium))
+                                NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium),
+                                color=_ACCENT())
             self.ctx_hotkey_btn.setEnabled_(False)
 
             def _get_mods(flags):
@@ -853,13 +878,15 @@ class SpeakFlowUI(NSObject):
                 self.hotkey_display.setStringValue_("Press a key...")
                 self.hotkey_display.setTextColor_(_ACCENT())
                 self._set_btn_title(self.hotkey_btn, "Listening...",
-                                    NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium))
+                                    NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium),
+                                    color=_ACCENT())
                 self.hotkey_btn.setEnabled_(False)
             else:
                 self.ctx_hotkey_display.setStringValue_("Press a key...")
                 self.ctx_hotkey_display.setTextColor_(_ACCENT())
                 self._set_btn_title(self.ctx_hotkey_btn, "Listening...",
-                                    NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium))
+                                    NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium),
+                                    color=_ACCENT())
                 self.ctx_hotkey_btn.setEnabled_(False)
 
             _KEYCODE_MAP = {
@@ -952,13 +979,15 @@ class SpeakFlowUI(NSObject):
             self.hotkey_display.setStringValue_(hotkey_text)
             self.hotkey_display.setTextColor_(_GOLD())
             self._set_btn_title(self.hotkey_btn, "Change",
-                                NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium))
+                                NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium),
+                                color=_DIM())
             self.hotkey_btn.setEnabled_(True)
         else:
             self.ctx_hotkey_display.setStringValue_(f"{self.config.context_hotkey} (hold)")
             self.ctx_hotkey_display.setTextColor_(_PURPLE())
             self._set_btn_title(self.ctx_hotkey_btn, "Change",
-                                NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium))
+                                NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium),
+                                color=_DIM())
             self.ctx_hotkey_btn.setEnabled_(True)
 
     @objc.python_method
@@ -972,7 +1001,8 @@ class SpeakFlowUI(NSObject):
                 self.hotkey_display.setStringValue_(display)
                 self.hotkey_display.setTextColor_(_GOLD())
                 self._set_btn_title(self.hotkey_btn, "Change",
-                                    NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium))
+                                    NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium),
+                                    color=_DIM())
                 self.hotkey_btn.setEnabled_(True)
                 logger.info("Hotkey changed to %s.", new_hotkey)
             else:
@@ -981,7 +1011,8 @@ class SpeakFlowUI(NSObject):
                 self.ctx_hotkey_display.setStringValue_(f"{new_hotkey} (hold)")
                 self.ctx_hotkey_display.setTextColor_(_PURPLE())
                 self._set_btn_title(self.ctx_hotkey_btn, "Change",
-                                    NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium))
+                                    NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium),
+                                    color=_DIM())
                 self.ctx_hotkey_btn.setEnabled_(True)
                 logger.info("Context hotkey changed to %s.", new_hotkey)
         except Exception:
@@ -997,7 +1028,7 @@ class SpeakFlowUI(NSObject):
         # Mask the displayed key
         masked = raw[:3] + "•" * max(0, len(raw) - 7) + raw[-4:]
         sender.setStringValue_(masked)
-        self.status_label.setStringValue_("API key saved!")
+        self.status_label.setStringValue_("API key saved")
         self.status_label.setTextColor_(_GREEN())
         logger.info("API key updated.")
         threading.Timer(2.0, lambda: self._run_on_main(self._ui_ready)).start()
@@ -1071,7 +1102,8 @@ class SpeakFlowUI(NSObject):
 
     def checkForUpdates_(self, sender):
         self._set_btn_title(self._update_btn, "Checking...",
-                            NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium))
+                            NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium),
+                            color=_DIM())
         self._update_btn.setEnabled_(False)
         threading.Thread(target=self._do_update, daemon=True).start()
 
@@ -1081,7 +1113,8 @@ class SpeakFlowUI(NSObject):
         try:
             # Check if it's a git repo
             if not (install_dir / ".git").exists():
-                self._run_on_main(lambda: self._show_update_result("Not a git install — update manually."))
+                self._run_on_main(lambda: self._show_update_result(
+                    "Manual install — use install.sh to update"))
                 return
 
             # Fetch latest
@@ -1090,7 +1123,8 @@ class SpeakFlowUI(NSObject):
                 capture_output=True, text=True, timeout=15,
             )
             if result.returncode != 0:
-                self._run_on_main(lambda: self._show_update_result("Could not reach GitHub."))
+                self._run_on_main(lambda: self._show_update_result(
+                    "No internet connection"))
                 return
 
             # Check if behind
@@ -1099,7 +1133,8 @@ class SpeakFlowUI(NSObject):
                 capture_output=True, text=True, timeout=5,
             )
             if "behind" not in status.stdout:
-                self._run_on_main(lambda: self._show_update_result("Already up to date!"))
+                self._run_on_main(lambda: self._show_update_result(
+                    "You're on the latest version", is_success=True))
                 return
 
             # Pull
@@ -1108,7 +1143,8 @@ class SpeakFlowUI(NSObject):
                 capture_output=True, text=True, timeout=30,
             )
             if pull.returncode != 0:
-                self._run_on_main(lambda: self._show_update_result("Update failed. Run update.sh manually."))
+                self._run_on_main(lambda: self._show_update_result(
+                    "Update failed — run update.sh manually"))
                 return
 
             # Reinstall deps
@@ -1118,20 +1154,42 @@ class SpeakFlowUI(NSObject):
                 capture_output=True, timeout=60,
             )
 
-            self._run_on_main(lambda: self._show_update_result("Updated! Restart SpeakFlow to apply."))
-            logger.info("Update completed successfully.")
+            logger.info("Update completed — restarting.")
+            self._run_on_main(self._restart_app)
 
         except Exception as exc:
             logger.error("Update failed: %s", exc)
-            self._run_on_main(lambda: self._show_update_result(f"Error: {exc}"))
+            self._run_on_main(lambda: self._show_update_result(
+                f"Update error — try again later"))
 
     @objc.python_method
-    def _show_update_result(self, msg):
+    def _restart_app(self):
+        """Restart the application after a successful update."""
+        import sys
+        self.status_label.setStringValue_("Restarting...")
+        self.status_label.setTextColor_(_GREEN())
+        install_dir = Path.home() / ".speakflow"
+        if _APP_PATH.exists():
+            subprocess.Popen(
+                f'sleep 1 && open "{_APP_PATH}"',
+                shell=True, start_new_session=True,
+            )
+        else:
+            script = sys.argv[0] if sys.argv else str(install_dir / "run.py")
+            subprocess.Popen(
+                f'sleep 1 && "{sys.executable}" "{script}"',
+                shell=True, start_new_session=True,
+            )
+        NSApp.terminate_(None)
+
+    @objc.python_method
+    def _show_update_result(self, msg, is_success=False):
         self._set_btn_title(self._update_btn, "Check for Updates",
-                            NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium))
+                            NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium),
+                            color=_DIM())
         self._update_btn.setEnabled_(True)
         self.status_label.setStringValue_(msg)
-        self.status_label.setTextColor_(_ACCENT())
+        self.status_label.setTextColor_(_GREEN() if is_success else _ACCENT())
 
         def _clear():
             if not self._recording and not self._processing:
@@ -1146,7 +1204,7 @@ class SpeakFlowUI(NSObject):
         if self._capturing:
             return
         if not self.config.openai_api_key:
-            self._run_on_main(lambda: self._ui_error("Enter your API key in Settings first"))
+            self._run_on_main(lambda: self._ui_error("Add your API key first"))
             return
         with self._stop_lock:
             if self._recording or self._processing:
@@ -1227,7 +1285,7 @@ class SpeakFlowUI(NSObject):
         if self._capturing:
             return
         if not self.config.openai_api_key:
-            self._run_on_main(lambda: self._ui_error("Enter your API key in Settings first"))
+            self._run_on_main(lambda: self._ui_error("Add your API key first"))
             return
         with self._stop_lock:
             if self._recording or self._processing:
@@ -1377,6 +1435,7 @@ class SpeakFlowUI(NSObject):
         self.status_label.setTextColor_(_RED())
         self._status_dot.layer().setBackgroundColor_(_RED().CGColor())
         self._set_btn_title(self.rec_button, "Stop Recording")
+        self.rec_button.layer().setBackgroundColor_(_RED().CGColor())
         self.status_item.setTitle_("REC")
         self._show_float("recording", _RED())
 
@@ -1386,6 +1445,7 @@ class SpeakFlowUI(NSObject):
         self.status_label.setTextColor_(_ORANGE())
         self._status_dot.layer().setBackgroundColor_(_ORANGE().CGColor())
         self._set_btn_title(self.rec_button, "Processing...")
+        self.rec_button.layer().setBackgroundColor_(_ORANGE().CGColor())
         self.status_item.setTitle_("...")
         self._show_float("transcribing", _ORANGE())
 
@@ -1401,22 +1461,25 @@ class SpeakFlowUI(NSObject):
         self.status_label.setTextColor_(_PURPLE())
         self._status_dot.layer().setBackgroundColor_(_PURPLE().CGColor())
         self._set_btn_title(self.rec_button, "Stop Recording")
+        self.rec_button.layer().setBackgroundColor_(_PURPLE().CGColor())
         self.status_item.setTitle_("CTX")
 
     @objc.python_method
     def _ui_context_thinking(self):
-        self.status_label.setStringValue_("Thinking...")
+        self.status_label.setStringValue_("Context — Thinking...")
         self.status_label.setTextColor_(_PURPLE())
         self._status_dot.layer().setBackgroundColor_(_PURPLE().CGColor())
         self._set_btn_title(self.rec_button, "Processing...")
+        self.rec_button.layer().setBackgroundColor_(_PURPLE().CGColor())
         self.status_item.setTitle_("...")
 
     @objc.python_method
     def _ui_context_done(self, response):
-        self.status_label.setStringValue_("Copied to clipboard!")
+        self.status_label.setStringValue_("Copied to clipboard")
         self.status_label.setTextColor_(_GREEN())
         self._status_dot.layer().setBackgroundColor_(_GREEN().CGColor())
         self._set_btn_title(self.rec_button, "Start Recording")
+        self.rec_button.layer().setBackgroundColor_(_GREEN().CGColor())
         self.status_item.setTitle_("SF")
         self._set_float_color(_GREEN())
         self._last_text_label.setStringValue_(response)
@@ -1433,6 +1496,7 @@ class SpeakFlowUI(NSObject):
         self.status_label.setTextColor_(_ACCENT())
         self._status_dot.layer().setBackgroundColor_(_ACCENT().CGColor())
         self._set_btn_title(self.rec_button, "Start Recording")
+        self.rec_button.layer().setBackgroundColor_(_GREEN().CGColor())
         self.status_item.setTitle_("SF")
         self._hide_float()
 
@@ -1442,6 +1506,7 @@ class SpeakFlowUI(NSObject):
         self.status_label.setTextColor_(_RED())
         self._status_dot.layer().setBackgroundColor_(_RED().CGColor())
         self._set_btn_title(self.rec_button, "Start Recording")
+        self.rec_button.layer().setBackgroundColor_(_GREEN().CGColor())
         self.status_item.setTitle_("SF")
         if self.config.sound_feedback:
             play_error_sound()
