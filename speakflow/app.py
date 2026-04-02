@@ -369,10 +369,10 @@ class SpeakFlowUI(NSObject):
         card_h = 110
         sc = self._card(v, pad, y - card_h, cw, card_h)
 
-        self._status_dot = self._dot(sc, cw / 2 - 52, card_h - 42, 10, _ACCENT())
-        self.status_label = self._label(sc, "Ready", cw / 2 - 38, card_h - 48, 130, 24,
-                                        NSFont.systemFontOfSize_weight_(17, NSFontWeightSemibold),
-                                        _ACCENT(), False)
+        self._status_dot = self._dot(sc, 20, card_h - 42, 10, _ACCENT())
+        self.status_label = self._label(sc, "Ready", 38, card_h - 48, cw - 56, 24,
+                                        NSFont.systemFontOfSize_weight_(15, NSFontWeightSemibold),
+                                        _ACCENT(), True)
 
         bw, bh = 180, 34
         self.rec_button = self._styled_btn(sc, "Start Recording",
