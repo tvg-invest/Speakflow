@@ -4,19 +4,18 @@ import sys
 import os
 import logging
 
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(os.path.expanduser('~/.speakflow/speakflow.log')),
-        logging.StreamHandler()
-    ]
-)
-
 def main():
-    # Ensure config directory exists
+    # Ensure config directory exists before setting up file logging
     os.makedirs(os.path.expanduser('~/.speakflow'), exist_ok=True)
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(os.path.expanduser('~/.speakflow/speakflow.log')),
+            logging.StreamHandler()
+        ]
+    )
 
     # Check Python version
     if sys.version_info < (3, 9):

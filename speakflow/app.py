@@ -169,8 +169,8 @@ class SpeakFlowUI(NSObject):
         self._build_status_bar()
         self._build_window()
         self._build_floating_indicator()
-        self._check_permissions()
         self._check_api_key()
+        self._check_permissions()
         self.hotkey_listener.start()
         self.context_listener.start()
 

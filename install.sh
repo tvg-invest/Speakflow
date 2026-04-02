@@ -23,7 +23,7 @@ if ! command -v python3 &>/dev/null; then
 fi
 PY_VER=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
 PY_MINOR=$(python3 -c 'import sys; print(sys.version_info.minor)')
-if [ "$(python3 -c 'import sys; print(sys.version_info.major')" -lt 3 ] 2>/dev/null || [ "$PY_MINOR" -lt 9 ] 2>/dev/null; then
+if [ "$(python3 -c 'import sys; print(sys.version_info.major)')" -lt 3 ] 2>/dev/null || [ "$PY_MINOR" -lt 9 ] 2>/dev/null; then
     echo "  Python 3.9+ required (found $PY_VER)"
     exit 1
 fi
