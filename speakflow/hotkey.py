@@ -105,6 +105,12 @@ class HotkeyListener:
         self._listener: Optional[Listener] = None
         self._held_mods: set[Key] = set()
 
+        # Hold-delay: for modifier-only hotkeys, wait this long before
+        # activating so that quick modifier+key shortcuts (Cmd+C etc.)
+        # are not intercepted.
+        self._hold_delay: float = 0.3
+        self._hold_timer: Optional[threading.Timer] = None
+
         # Derived from hotkey_string — updated by _parse_hotkey().
         self._is_modifier_only = False
         self._target_mod: Optional[Key] = None
@@ -132,6 +138,7 @@ class HotkeyListener:
         """Stop the listener permanently (app quit)."""
         if self._listener is None:
             return
+        self._cancel_hold_timer()
         self._listener.stop()
         self._listener = None
         with self._lock:
@@ -145,6 +152,7 @@ class HotkeyListener:
 
     def update_hotkey(self, hotkey_string: str) -> None:
         """Change the target hotkey without restarting the listener."""
+        self._cancel_hold_timer()
         self._hotkey_string = hotkey_string
         self._parse_hotkey()
         with self._lock:
@@ -223,13 +231,17 @@ class HotkeyListener:
 
         if self._is_modifier_only:
             if nk == self._target_mod:
-                with self._lock:
-                    if not self._active:
-                        self._active = True
-                        cb = self._on_activate
-                    else:
-                        cb = None
-                self._fire(cb)
+                # Start hold timer — only activate after the delay so
+                # quick shortcut combos (Cmd+C etc.) aren't intercepted.
+                self._cancel_hold_timer()
+                t = threading.Timer(self._hold_delay, self._hold_expired)
+                t.daemon = True
+                t.start()
+                self._hold_timer = t
+            elif self._hold_timer is not None:
+                # A non-modifier key was pressed while waiting — user is
+                # doing a shortcut (e.g. Cmd+C), cancel activation.
+                self._cancel_hold_timer()
         else:
             # Combo mode: trigger fires when correct mods are held
             if not self._is_mod(key) and self._matches_trigger(key):
@@ -248,6 +260,7 @@ class HotkeyListener:
 
         if self._is_modifier_only:
             if nk == self._target_mod:
+                self._cancel_hold_timer()
                 with self._lock:
                     if self._active:
                         self._active = False
@@ -259,3 +272,18 @@ class HotkeyListener:
         # Release modifier tracking
         if self._is_mod(key):
             self._held_mods.discard(nk)
+
+    def _hold_expired(self) -> None:
+        """Timer callback: activate if the modifier is still held."""
+        with self._lock:
+            if not self._active and self._target_mod in self._held_mods:
+                self._active = True
+                cb = self._on_activate
+            else:
+                cb = None
+        self._fire(cb)
+
+    def _cancel_hold_timer(self) -> None:
+        if self._hold_timer is not None:
+            self._hold_timer.cancel()
+            self._hold_timer = None
