@@ -133,6 +133,7 @@ class SpeakFlowUI(NSObject):
         self._capturing = False
         self._capture_target = "main"
         self._context_mode = False
+        self._float_triggered = False
         self._selected_text = ""
         self._active_app = ""
         self._stop_lock = threading.Lock()
@@ -686,6 +687,7 @@ class SpeakFlowUI(NSObject):
             else:
                 self._on_deactivate()
         else:
+            self._float_triggered = True
             self._on_activate()
 
     def updateLevels_(self, timer):
@@ -1419,16 +1421,20 @@ class SpeakFlowUI(NSObject):
             # Save to history
             history.add(text, app_name=self._active_app, language=self.config.language)
 
-            # Insert text at cursor
-            self.text_inserter.insert_text(text)
-
-            # Update UI with last transcription
-            self._run_on_main(lambda: self._ui_done(text))
+            if self._float_triggered:
+                # Float button has no cursor target — copy to clipboard instead
+                self._set_clipboard(text)
+                self._run_on_main(lambda: self._ui_done_clipboard(text))
+            else:
+                # Hotkey — insert text at cursor in the active app
+                self.text_inserter.insert_text(text)
+                self._run_on_main(lambda: self._ui_done(text))
         except Exception:
             logger.error("Transcribe failed:\n%s", traceback.format_exc())
             self._run_on_main(lambda: self._ui_error("Transcription failed."))
         finally:
             self._processing = False
+            self._float_triggered = False
 
     # ── UI state updates ────────────────────────────────────────
 
@@ -1457,6 +1463,24 @@ class SpeakFlowUI(NSObject):
         """Transition to ready + show last transcription."""
         self._ui_ready()
         self._last_text_label.setStringValue_(text)
+
+    @objc.python_method
+    def _ui_done_clipboard(self, text):
+        """Show 'copied' feedback when triggered from float button."""
+        self.status_label.setStringValue_("Copied to clipboard")
+        self.status_label.setTextColor_(_GREEN())
+        self._status_dot.layer().setBackgroundColor_(_GREEN().CGColor())
+        self._set_btn_title(self.rec_button, "Start Recording")
+        self.rec_button.layer().setBackgroundColor_(_GREEN().CGColor())
+        self.status_item.setTitle_("SF")
+        self._set_float_color(_GREEN())
+        self._last_text_label.setStringValue_(text)
+
+        def _auto_clear():
+            if not self._recording and not self._processing:
+                self._run_on_main(self._ui_ready)
+
+        threading.Timer(2.5, _auto_clear).start()
 
     @objc.python_method
     def _ui_context_recording(self):
