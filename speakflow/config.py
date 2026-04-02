@@ -36,8 +36,11 @@ class Config:
 
     def load(self) -> None:
         if CONFIG_FILE.exists():
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                self._data = json.load(f)
+            try:
+                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                    self._data = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                self._data = {}
             merged = {**DEFAULTS, **self._data}
             if merged != self._data:
                 self._data = merged

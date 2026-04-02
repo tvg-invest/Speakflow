@@ -136,7 +136,8 @@ class Transcriber:
                     {"role": "user", "content": raw_text},
                 ],
             )
-            cleaned: str = response.choices[0].message.content.strip()
+            content = response.choices[0].message.content
+            cleaned: str = content.strip() if content else raw_text
             logger.debug("Cleaned transcription: %s", cleaned)
             return cleaned
         except openai.AuthenticationError:
@@ -203,7 +204,8 @@ class Transcriber:
                     {"role": "user", "content": user_msg},
                 ],
             )
-            result: str = response.choices[0].message.content.strip()
+            content = response.choices[0].message.content
+            result: str = content.strip() if content else ""
             logger.debug("Context response: %s", result[:200])
             return result
         except openai.AuthenticationError:

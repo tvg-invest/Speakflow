@@ -1402,7 +1402,7 @@ KEYBOARD SHORTCUTS
 
     @objc.python_method
     def _show_update_result(self, msg, is_success=False):
-        self._set_btn_title(self._update_btn, "Check for Updates",
+        self._set_btn_title(self._update_btn, "Update",
                             NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium),
                             color=_DIM())
         self._update_btn.setEnabled_(True)
@@ -1428,7 +1428,7 @@ KEYBOARD SHORTCUTS
             if self._recording or self._processing:
                 return
             self._recording = True
-        self._active_app = self._get_active_app()
+        self._active_app = self._run_on_main_sync(self._get_active_app)
         self._run_on_main(self._ui_recording)
         try:
             if self.config.sound_feedback:
@@ -1535,8 +1535,8 @@ KEYBOARD SHORTCUTS
                 return
             self._recording = True
             self._context_mode = True
-        self._active_app = self._get_active_app()
-        self._selected_text = self._grab_selection()
+        self._active_app = self._run_on_main_sync(self._get_active_app)
+        self._selected_text = self._run_on_main_sync(self._grab_selection)
         # Re-check: deactivate may have raced us during _grab_selection
         if not self._recording:
             self._context_mode = False
@@ -1633,7 +1633,7 @@ KEYBOARD SHORTCUTS
                 self._run_on_main(lambda: self._ui_error("No response generated."))
                 return
 
-            self._set_clipboard(response)
+            self._run_on_main_sync(lambda: self._set_clipboard(response))
             logger.info("Context response copied: %d chars.", len(response))
             history.add(
                 f"[Context] {voice_text}\n→ {response}",
@@ -1690,7 +1690,7 @@ KEYBOARD SHORTCUTS
 
             if self._float_triggered:
                 # Float button has no cursor target — copy to clipboard instead
-                self._set_clipboard(text)
+                self._run_on_main_sync(lambda: self._set_clipboard(text))
                 self._run_on_main(lambda: self._ui_done_clipboard(text))
             else:
                 # Hotkey — insert text at cursor in the active app
@@ -1827,6 +1827,30 @@ KEYBOARD SHORTCUTS
     @objc.python_method
     def _run_on_main(self, func):
         self._dispatcher.enqueue_(func)
+
+    @objc.python_method
+    def _run_on_main_sync(self, func):
+        """Run func on the main thread and block until it returns. Returns the result."""
+        if threading.current_thread() is threading.main_thread():
+            return func()
+        event = threading.Event()
+        result = [None]
+        error = [None]
+        def wrapper():
+            try:
+                result[0] = func()
+            except Exception as e:
+                error[0] = e
+            finally:
+                event.set()
+        d = self._dispatcher
+        with d._lock:
+            d._queue.append(wrapper)
+        d.performSelectorOnMainThread_withObject_waitUntilDone_("drain:", None, False)
+        event.wait(timeout=5.0)
+        if error[0] is not None:
+            raise error[0]
+        return result[0]
 
 
 class SpeakFlowApp:
