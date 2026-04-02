@@ -4,6 +4,8 @@ Captures microphone audio using sounddevice, with silence detection
 and WAV output optimised for Whisper (16 kHz, mono, 16-bit PCM).
 """
 
+from __future__ import annotations
+
 import io
 import struct
 import threading
@@ -62,14 +64,14 @@ class AudioRecorder:
         silence_timeout: float = 2.0,
         max_duration: float = 120,
         silence_threshold_factor: float = 1.5,
-        device: int | str | None = None,
+        device=None,
     ) -> None:
         self.sample_rate = sample_rate
         self.channels = channels
         self.silence_timeout = silence_timeout
         self.max_duration = max_duration
         self.silence_threshold_factor = silence_threshold_factor
-        self.device = device  # None = system default
+        self.device = device  # None = system default, or int device index
 
         # Public callbacks -- set by the caller.
         self.on_silence_detected: callable | None = None
