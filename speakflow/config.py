@@ -13,7 +13,7 @@ DEFAULTS: dict[str, Any] = {
     "language": "auto",
     "auto_language_detect": True,
     "model": "whisper-1",
-    "max_recording_seconds": 120,
+    "max_recording_seconds": 7200,
     "silence_timeout": 2.0,
     "sound_feedback": True,
     "text_insertion_method": "clipboard",

@@ -62,7 +62,7 @@ class AudioRecorder:
         sample_rate: int = 16000,
         channels: int = 1,
         silence_timeout: float = 2.0,
-        max_duration: float = 120,
+        max_duration: float = 7200,
         silence_threshold_factor: float = 1.5,
         device=None,
     ) -> None:

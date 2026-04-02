@@ -221,7 +221,7 @@ class MainActivity : AppCompatActivity() {
 
         recordingThread = thread {
             val buffer = ByteArray(bufSize)
-            val maxBytes = SAMPLE_RATE * 2 * 120 // 120 seconds max
+            val maxBytes = SAMPLE_RATE * 2 * 7200 // 2 hours max
             while (recording) {
                 val read = audioRecord?.read(buffer, 0, buffer.size) ?: -1
                 if (read > 0) {
