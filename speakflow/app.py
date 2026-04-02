@@ -1080,7 +1080,10 @@ class SpeakFlowUI(NSObject):
 
     @objc.python_method
     def _grab_selection(self):
-        """Simulate Cmd+C and return clipboard contents."""
+        """Simulate Cmd+C and return clipboard contents, preserving original clipboard."""
+        pb = NSPasteboard.generalPasteboard()
+        original = pb.stringForType_("public.utf8-plain-text") or ""
+
         src = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStatePrivate)
         c_down = Quartz.CGEventCreateKeyboardEvent(src, 8, True)
         Quartz.CGEventSetFlags(c_down, Quartz.kCGEventFlagMaskCommand)
@@ -1089,8 +1092,15 @@ class SpeakFlowUI(NSObject):
         Quartz.CGEventSetFlags(c_up, Quartz.kCGEventFlagMaskCommand)
         Quartz.CGEventPost(Quartz.kCGAnnotatedSessionEventTap, c_up)
         _time.sleep(0.15)
-        pb = NSPasteboard.generalPasteboard()
-        return pb.stringForType_("public.utf8-plain-text") or ""
+
+        selection = pb.stringForType_("public.utf8-plain-text") or ""
+
+        # Restore original clipboard
+        if original:
+            pb.clearContents()
+            pb.setString_forType_(original, "public.utf8-plain-text")
+
+        return selection
 
     @objc.python_method
     def _set_clipboard(self, text):

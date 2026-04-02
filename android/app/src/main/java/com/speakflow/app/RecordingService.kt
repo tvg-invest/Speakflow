@@ -49,15 +49,18 @@ class RecordingService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_TOGGLE) {
-            if (processing) return START_STICKY
-            if (isRecording) {
-                stopRecording()
-                processAudio()
-            } else {
-                startForeground(NOTIFICATION_ID, buildRecordingNotification())
-                startRecording()
-            }
+        if (intent?.action != ACTION_TOGGLE) {
+            // System restart with null intent — nothing to do, stop immediately
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        if (processing) return START_STICKY
+        if (isRecording) {
+            stopRecording()
+            processAudio()
+        } else {
+            startForeground(NOTIFICATION_ID, buildRecordingNotification())
+            startRecording()
         }
         return START_STICKY
     }

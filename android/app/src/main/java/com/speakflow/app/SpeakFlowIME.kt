@@ -61,6 +61,24 @@ class SpeakFlowIME : InputMethodService() {
         imm.switchToLastInputMethod(window.window?.attributes?.token)
     }
 
+    override fun onStartInputView(info: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
+        super.onStartInputView(info, restarting)
+        // Re-check API key every time keyboard becomes visible
+        val prefs = getSharedPreferences("speakflow", MODE_PRIVATE)
+        val hasKey = prefs.getString("api_key", "")?.isNotEmpty() == true
+        if (::micBtn.isInitialized) {
+            micBtn.isEnabled = hasKey
+            micBtn.alpha = if (hasKey) 1.0f else 0.4f
+            if (hasKey && !recording && !processing) {
+                statusText.text = "Tap to record"
+                statusText.setTextColor(getColor(R.color.accent))
+            } else if (!hasKey) {
+                statusText.text = "Open SpeakFlow app to set API key"
+                statusText.setTextColor(getColor(R.color.orange))
+            }
+        }
+    }
+
     private fun onMicTap() {
         if (processing) return
         if (recording) {
