@@ -139,7 +139,10 @@ class SpeakFlowUI(NSObject):
         self._stop_lock = threading.Lock()
         self._dispatcher = MainThreadDispatcher.alloc().init()
         self._history_win = None
+        self._guide_win = None
         self._key_monitor = None
+        self._has_accessibility = False
+        self._ax_timer = None
 
         # Core components
         self.audio_recorder = AudioRecorder(
@@ -177,26 +180,42 @@ class SpeakFlowUI(NSObject):
         self._build_floating_indicator()
         self._check_api_key()
         self._check_permissions()
-        self.hotkey_listener.start()
-        self.context_listener.start()
+
+        # Only start hotkey listeners if Accessibility is granted.
+        # If not, a periodic timer will start them once permission arrives.
+        if self._has_accessibility:
+            self.hotkey_listener.start()
+            self.context_listener.start()
+        else:
+            self._start_ax_poll()
 
         self.window.makeKeyAndOrderFront_(None)
         NSApp.activateIgnoringOtherApps_(True)
+
+        # Show first-time onboarding guide
+        if self.config.get("first_run", True):
+            self.config.set("first_run", False)
+            # Delay slightly so the main window is visible first
+            NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+                0.5, self, "showGuide:", None, False)
+
         logger.info("SpeakFlowApp initialised.")
 
     @objc.python_method
     def _check_permissions(self):
-        # Silent check — never trigger the system dialog (it reappears
-        # after every update because macOS revokes trust when code changes).
         trusted = ApplicationServices.AXIsProcessTrustedWithOptions(
             {ApplicationServices.kAXTrustedCheckOptionPrompt: False}
         )
+        self._has_accessibility = trusted
         if not trusted:
             logger.warning("Accessibility not granted.")
             self.status_label.setStringValue_(
-                "Open System Settings → Privacy → Accessibility → enable SpeakFlow")
+                "Accessibility access required — click below")
             self.status_label.setTextColor_(_ORANGE())
+            self._show_ax_fix_button()
             return
+        # Permission granted — hide fix button if it was showing
+        self._hide_ax_fix_button()
         AVCaptureDevice = objc.lookUpClass('AVCaptureDevice')
         mic_status = AVCaptureDevice.authorizationStatusForMediaType_('soun')
         if mic_status == 0:
@@ -206,6 +225,73 @@ class SpeakFlowUI(NSObject):
             logger.warning("Microphone access denied.")
             self.status_label.setStringValue_("Grant Microphone access in System Settings")
             self.status_label.setTextColor_(_ORANGE())
+
+    @objc.python_method
+    def _show_ax_fix_button(self):
+        """Show a button in the status card to open Accessibility settings."""
+        if hasattr(self, '_ax_fix_btn') and self._ax_fix_btn is not None:
+            self._ax_fix_btn.setHidden_(False)
+            self.rec_button.setHidden_(True)
+            return
+        # Replace the record button area with an accessibility fix button
+        parent = self.rec_button.superview()
+        frame = self.rec_button.frame()
+        self._ax_fix_btn = NSButton.alloc().initWithFrame_(
+            NSMakeRect(frame.origin.x - 20, frame.origin.y, frame.size.width + 40, frame.size.height))
+        self._ax_fix_btn.setButtonType_(0)
+        self._ax_fix_btn.setBordered_(False)
+        self._ax_fix_btn.setWantsLayer_(True)
+        self._ax_fix_btn.setFocusRingType_(1)
+        self._ax_fix_btn.layer().setCornerRadius_(8)
+        self._ax_fix_btn.layer().setBackgroundColor_(_ORANGE().CGColor())
+        self._set_btn_title(self._ax_fix_btn, "Open Accessibility Settings")
+        self._ax_fix_btn.setTarget_(self)
+        self._ax_fix_btn.setAction_("openAccessibilitySettings:")
+        parent.addSubview_(self._ax_fix_btn)
+        self.rec_button.setHidden_(True)
+
+    @objc.python_method
+    def _hide_ax_fix_button(self):
+        """Hide the accessibility fix button and restore the record button."""
+        if hasattr(self, '_ax_fix_btn') and self._ax_fix_btn is not None:
+            self._ax_fix_btn.setHidden_(True)
+        self.rec_button.setHidden_(False)
+
+    def openAccessibilitySettings_(self, sender):
+        import subprocess as sp
+        sp.Popen(["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
+
+    @objc.python_method
+    def _start_ax_poll(self):
+        """Poll Accessibility permission every 2s until granted."""
+        if self._ax_timer is not None:
+            return
+        self._ax_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            2.0, self, "_axPollTick:", None, True)
+        logger.info("Started Accessibility permission polling.")
+
+    def _axPollTick_(self, timer):
+        trusted = ApplicationServices.AXIsProcessTrustedWithOptions(
+            {ApplicationServices.kAXTrustedCheckOptionPrompt: False}
+        )
+        if trusted:
+            logger.info("Accessibility permission granted — starting hotkey listeners.")
+            self._has_accessibility = True
+            self._ax_timer.invalidate()
+            self._ax_timer = None
+            self._hide_ax_fix_button()
+            # Start the listeners now that we have permission
+            if not self.hotkey_listener.is_listening:
+                self.hotkey_listener.start()
+            if not self.context_listener.is_listening:
+                self.context_listener.start()
+            # Restore status
+            if self.config.openai_api_key:
+                self.status_label.setStringValue_("Ready")
+                self.status_label.setTextColor_(_ACCENT())
+                self._status_dot.layer().setBackgroundColor_(_ACCENT().CGColor())
+            else:
+                self._check_api_key()
 
     @objc.python_method
     def _check_api_key(self):
@@ -603,23 +689,28 @@ class SpeakFlowUI(NSObject):
         y -= lt_h + 12
 
         # ── Footer ──
-        btn_w = 130
-        gap = 12
-        total = btn_w * 2 + gap
+        btn_w = 105
+        gap = 10
+        total = btn_w * 3 + gap * 2
         bx = (W - total) / 2
 
-        hist_btn = self._ghost_btn(v, "View History",
+        hist_btn = self._ghost_btn(v, "History",
                                    bx, y - 4, btn_w, 26)
         hist_btn.setTarget_(self)
         hist_btn.setAction_("showHistory:")
 
-        self._update_btn = self._ghost_btn(v, "Check for Updates",
-                                          bx + btn_w + gap, y - 4, btn_w, 26)
+        help_btn = self._ghost_btn(v, "Help & Guide",
+                                   bx + btn_w + gap, y - 4, btn_w, 26)
+        help_btn.setTarget_(self)
+        help_btn.setAction_("showGuide:")
+
+        self._update_btn = self._ghost_btn(v, "Update",
+                                          bx + (btn_w + gap) * 2, y - 4, btn_w, 26)
         self._update_btn.setTarget_(self)
         self._update_btn.setAction_("checkForUpdates:")
         y -= 30
 
-        self._label(v, "Hotkey = dictate  ·  Context Key = select + AI query",
+        self._label(v, "Hotkey = dictate  ·  Context Key = select text + AI query",
                     pad, y, cw, 14, NSFont.systemFontOfSize_(10), _DIM(), True)
 
     # ── Floating waveform indicator ─────────────────────────────
@@ -767,6 +858,117 @@ class SpeakFlowUI(NSObject):
         self._float_win.orderFront_(None)
 
     # ── History window ──────────────────────────────────────────
+
+    def showGuide_(self, sender):
+        w, h = 520, 620
+        if self._guide_win is None:
+            screen = NSScreen.mainScreen().frame()
+            self._guide_win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+                NSMakeRect((screen.size.width - w) / 2, (screen.size.height - h) / 2, w, h),
+                1 | 2 | 4 | 8, NSBackingStoreBuffered, False)
+            self._guide_win.setTitle_("SpeakFlow — Guide")
+            self._guide_win.setBackgroundColor_(_BG())
+            self._guide_win.setReleasedWhenClosed_(False)
+            self._guide_win.setTitlebarAppearsTransparent_(True)
+            self._guide_win.setTitleVisibility_(1)
+
+        cv = self._guide_win.contentView()
+        for sub in list(cv.subviews()):
+            sub.removeFromSuperview()
+
+        scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
+        scroll.setHasVerticalScroller_(True)
+        scroll.setBorderType_(0)
+        scroll.setBackgroundColor_(_BG())
+
+        tv = NSTextView.alloc().initWithFrame_(NSMakeRect(0, 0, w - 20, 900))
+        tv.setEditable_(False)
+        tv.setSelectable_(True)
+        tv.setBackgroundColor_(_BG())
+        tv.setTextColor_(_WHITE())
+        tv.setFont_(NSFont.systemFontOfSize_(13))
+
+        hotkey_str = self.config.hotkey
+        if is_modifier_only(hotkey_str):
+            hotkey_desc = f"Hold  {hotkey_str.upper()}  to record, release to stop"
+        else:
+            hotkey_desc = f"Press  {hotkey_str.upper()}  to toggle recording"
+
+        ctx_key = self.config.context_hotkey
+        ctx_desc = f"Hold  {ctx_key.upper()}  to record with context"
+
+        guide = f"""Welcome to SpeakFlow
+
+Voice-to-text that types what you say, right where your cursor is.
+
+
+QUICK START
+
+1.  Make sure your API key is set (Settings → API Key)
+2.  Grant Accessibility and Microphone permissions when prompted
+3.  Use the hotkey to start dictating — text appears at your cursor
+
+
+DICTATION (HOTKEY)
+
+{hotkey_desc}.
+SpeakFlow transcribes your speech and pastes the text at your cursor.
+Works in any app — just place your cursor where you want text to appear.
+
+
+CONTEXT MODE (CONTEXT KEY)
+
+{ctx_desc}.
+Select text first, then hold the Context Key to give a voice instruction.
+SpeakFlow reads the selected text + your voice command, and uses AI to
+transform, answer, or edit based on what you said.
+
+Examples:
+  • Select a paragraph → hold {ctx_key.upper()} → say "make this more formal"
+  • Select code → hold {ctx_key.upper()} → say "add error handling"
+  • Select an email → hold {ctx_key.upper()} → say "write a reply"
+
+
+FLOATING INDICATOR
+
+The small floating bar at the bottom of your screen shows recording status.
+Click it to start a quick recording — the result is copied to your clipboard
+instead of pasted, so you can paste it wherever you want.
+
+  Blue dot = idle  ·  Green = ready  ·  Red = recording  ·  Orange = processing
+
+
+SETTINGS
+
+  • Hotkey / Context Key — change the keyboard shortcuts
+  • Language — set your dictation language or use auto-detect
+  • AI Cleanup — automatically fixes grammar, filler words, and formatting
+  • Smart Context — enables AI-powered context understanding
+  • Sound Feedback — plays a sound when recording starts/stops
+  • Start at Login — launch SpeakFlow automatically
+
+
+TIPS
+
+  • Recording stops automatically after a silence pause (configurable)
+  • Maximum recording length is 2 hours
+  • Check "View History" to see and copy previous transcriptions
+  • After an update, you may need to re-enable Accessibility permissions
+    in System Settings → Privacy & Security → Accessibility
+
+
+KEYBOARD SHORTCUTS
+
+  {hotkey_str.upper()}  — Dictation (voice to text at cursor)
+  {ctx_key.upper()}  — Context mode (select text + voice command)
+"""
+
+        tv.setString_(guide)
+        scroll.setDocumentView_(tv)
+        cv.addSubview_(scroll)
+
+        self._guide_win.makeKeyAndOrderFront_(None)
+        NSApp.activateIgnoringOtherApps_(True)
 
     def showHistory_(self, sender):
         entries = history.load()

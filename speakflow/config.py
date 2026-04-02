@@ -25,6 +25,7 @@ DEFAULTS: dict[str, Any] = {
     "context_hotkey": "alt",
     "context_model": "gpt-4o",
     "microphone": None,  # None = system default, or device index
+    "first_run": True,
 }
 
 
