@@ -184,11 +184,15 @@ class SpeakFlowUI(NSObject):
 
     @objc.python_method
     def _check_permissions(self):
+        # Check without prompting first; only prompt if not yet trusted.
         trusted = ApplicationServices.AXIsProcessTrustedWithOptions(
-            {ApplicationServices.kAXTrustedCheckOptionPrompt: True}
+            {ApplicationServices.kAXTrustedCheckOptionPrompt: False}
         )
         if not trusted:
             logger.warning("Accessibility not granted — prompting user.")
+            ApplicationServices.AXIsProcessTrustedWithOptions(
+                {ApplicationServices.kAXTrustedCheckOptionPrompt: True}
+            )
             self.status_label.setStringValue_("Grant Accessibility in System Settings")
             self.status_label.setTextColor_(_ORANGE())
             return
