@@ -5,6 +5,16 @@ import os
 import logging
 
 def main():
+    # Activate the venv site-packages so the embedded Python binary
+    # (which lives outside the venv) can find all dependencies.
+    venv_site = os.path.join(
+        os.path.expanduser('~/.speakflow'), 'venv', 'lib',
+        f'python{sys.version_info.major}.{sys.version_info.minor}',
+        'site-packages',
+    )
+    if os.path.isdir(venv_site) and venv_site not in sys.path:
+        sys.path.insert(0, venv_site)
+
     # Ensure config directory exists before setting up file logging
     os.makedirs(os.path.expanduser('~/.speakflow'), exist_ok=True)
 
