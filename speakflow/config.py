@@ -26,6 +26,8 @@ DEFAULTS: dict[str, Any] = {
     "context_model": "gpt-4o",
     "microphone": None,  # None = system default, or device index
     "first_run": True,
+    "editing_strength": "medium",  # "off", "light", "medium"
+    "personal_dictionary": [],     # custom words/names for transcription
 }
 
 
@@ -45,6 +47,14 @@ class Config:
             if merged != self._data:
                 self._data = merged
                 self.save()
+            # Migrate old ai_cleanup boolean → editing_strength
+            if "editing_strength" not in self._data or (
+                "ai_cleanup" in self._data and not self._data["ai_cleanup"]
+                and self._data.get("editing_strength") == "medium"
+            ):
+                if not self._data.get("ai_cleanup", True):
+                    self._data["editing_strength"] = "off"
+                    self.save()
         else:
             self._data = dict(DEFAULTS)
             self.save()
@@ -198,6 +208,22 @@ class Config:
     @microphone.setter
     def microphone(self, value) -> None:
         self.set("microphone", value)
+
+    @property
+    def editing_strength(self) -> str:
+        return self._data.get("editing_strength", "medium")
+
+    @editing_strength.setter
+    def editing_strength(self, value: str) -> None:
+        self.set("editing_strength", value)
+
+    @property
+    def personal_dictionary(self) -> list:
+        return self._data.get("personal_dictionary", [])
+
+    @personal_dictionary.setter
+    def personal_dictionary(self, value: list) -> None:
+        self.set("personal_dictionary", value)
 
     def __repr__(self) -> str:
         return f"Config({self._data!r})"

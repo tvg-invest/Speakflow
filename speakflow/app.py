@@ -144,6 +144,8 @@ class SpeakFlowUI(NSObject):
             auto_detect=self.config.auto_language_detect,
             ai_cleanup=self.config.ai_cleanup,
             cleanup_model=self.config.ai_cleanup_model,
+            editing_strength=self.config.editing_strength,
+            personal_dictionary=self.config.personal_dictionary,
         )
         self.text_inserter = TextInserter(method=self.config.text_insertion_method)
         self.hotkey_listener = HotkeyListener(
@@ -354,7 +356,7 @@ class SpeakFlowUI(NSObject):
 
     @objc.python_method
     def _build_window(self):
-        W, H = 460, 828
+        W, H = 460, 862
         screen = NSScreen.mainScreen().frame()
         cx = (screen.size.width - W) / 2
         cy = (screen.size.height - H) / 2
@@ -400,9 +402,9 @@ class SpeakFlowUI(NSObject):
         self.rec_button.setAction_("toggleRecording:")
         y -= card_h + 16
 
-        # ── Settings card (10 rows) ──
+        # ── Settings card (11 rows) ──
         row_h = 34
-        num_rows = 10
+        num_rows = 11
         set_h = 44 + num_rows * row_h + 10
         stc = self._card(v, pad, y - set_h, cw, set_h)
 
@@ -499,17 +501,25 @@ class SpeakFlowUI(NSObject):
         stc.addSubview_(self.mic_popup)
         ry -= row_h
 
-        # Row — AI Cleanup
-        self._label(stc, "AI Cleanup", lx, ry + 6, 120, 24,
+        # Row — Cleanup Level
+        self._label(stc, "Cleanup Level", lx, ry + 6, 120, 24,
                     NSFont.systemFontOfSize_(13), _DIM())
-        self.cleanup_btn = NSButton.alloc().initWithFrame_(
-            NSMakeRect(rx - 24, ry + 7, 22, 22))
-        self.cleanup_btn.setButtonType_(3)
-        self.cleanup_btn.setTitle_("")
-        self.cleanup_btn.setState_(1 if self.config.ai_cleanup else 0)
-        self.cleanup_btn.setTarget_(self)
-        self.cleanup_btn.setAction_("cleanupToggled:")
-        stc.addSubview_(self.cleanup_btn)
+        self.cleanup_popup = NSPopUpButton.alloc().initWithFrame_pullsDown_(
+            NSMakeRect(rx - 140, ry + 5, 140, 26), False)
+        for lvl in ["Off", "Light", "Medium"]:
+            self.cleanup_popup.addItemWithTitle_(lvl)
+        _level_titles = {"off": "Off", "light": "Light", "medium": "Medium"}
+        self.cleanup_popup.selectItemWithTitle_(
+            _level_titles.get(self.config.editing_strength, "Medium"))
+        self.cleanup_popup.setTarget_(self)
+        self.cleanup_popup.setAction_("cleanupLevelChanged:")
+        self.cleanup_popup.setWantsLayer_(True)
+        self.cleanup_popup.setBordered_(False)
+        self.cleanup_popup.layer().setCornerRadius_(6)
+        self.cleanup_popup.layer().setBackgroundColor_(_SEC_BG().CGColor())
+        self.cleanup_popup.layer().setBorderWidth_(1)
+        self.cleanup_popup.layer().setBorderColor_(_SEC_EDGE().CGColor())
+        stc.addSubview_(self.cleanup_popup)
         ry -= row_h
 
         # Row 4 — Context Cleanup
@@ -525,7 +535,33 @@ class SpeakFlowUI(NSObject):
         stc.addSubview_(self.context_btn)
         ry -= row_h
 
-        # Row 5 — Sound
+        # Row — My Words (personal dictionary)
+        self._label(stc, "My Words", lx, ry + 6, 90, 24,
+                    NSFont.systemFontOfSize_(13), _DIM())
+        self.dict_field = NSTextField.alloc().initWithFrame_(
+            NSMakeRect(lx + 90, ry + 4, cw - 120, 26))
+        self.dict_field.setPlaceholderString_("Names, terms (comma-separated)")
+        current_words = ", ".join(self.config.personal_dictionary)
+        if current_words:
+            self.dict_field.setStringValue_(current_words)
+        self.dict_field.setFont_(NSFont.systemFontOfSize_(11))
+        self.dict_field.setTextColor_(_WHITE())
+        self.dict_field.setDrawsBackground_(False)
+        self.dict_field.setBezeled_(False)
+        self.dict_field.setWantsLayer_(True)
+        self.dict_field.setFocusRingType_(1)
+        self.dict_field.layer().setCornerRadius_(6)
+        self.dict_field.layer().setBackgroundColor_(
+            NSColor.colorWithCalibratedRed_green_blue_alpha_(
+                0.12, 0.12, 0.16, 1.0).CGColor())
+        self.dict_field.layer().setBorderWidth_(1)
+        self.dict_field.layer().setBorderColor_(_SEC_EDGE().CGColor())
+        self.dict_field.setTarget_(self)
+        self.dict_field.setAction_("dictChanged:")
+        stc.addSubview_(self.dict_field)
+        ry -= row_h
+
+        # Row — Sound
         self._label(stc, "Sound Feedback", lx, ry + 6, 140, 24,
                     NSFont.systemFontOfSize_(13), _DIM())
         self.sound_btn = NSButton.alloc().initWithFrame_(
@@ -1071,9 +1107,18 @@ TIPS
         self.transcriber.language = code
         self.transcriber.auto_detect = (code == "auto")
 
-    def cleanupToggled_(self, sender):
-        self.config.ai_cleanup = bool(sender.state())
-        self.transcriber.ai_cleanup = bool(sender.state())
+    def cleanupLevelChanged_(self, sender):
+        title = sender.titleOfSelectedItem()
+        _level_map = {"Off": "off", "Light": "light", "Medium": "medium"}
+        level = _level_map.get(title, "medium")
+        self.config.editing_strength = level
+        self.transcriber.editing_strength = level
+
+    def dictChanged_(self, sender):
+        raw = sender.stringValue()
+        words = [w.strip() for w in raw.split(",") if w.strip()]
+        self.config.personal_dictionary = words
+        self.transcriber.personal_dictionary = words
 
     def contextToggled_(self, sender):
         self.config.context_cleanup = bool(sender.state())
@@ -1261,7 +1306,8 @@ TIPS
 
         # Auto-detect context: try to grab selection from the active app
         self._selected_text = ""
-        self._surrounding_text = ""
+        self._before_text = ""
+        self._after_text = ""
         self._context_mode = False
         if not self._float_triggered:
             sel = self._run_on_main_sync(self._grab_selection)
@@ -1271,8 +1317,9 @@ TIPS
                 logger.info("Context mode: grabbed %d chars from %s.",
                             len(sel), self._active_app)
             if self.config.context_cleanup:
-                self._surrounding_text = self._run_on_main_sync(
-                    self._grab_surrounding_text) or ""
+                result = self._run_on_main_sync(self._grab_surrounding_text)
+                if result:
+                    self._before_text, self._after_text = result
 
         # Re-check: deactivate may have raced us during _grab_selection
         if not self._recording:
@@ -1379,25 +1426,42 @@ TIPS
 
     @objc.python_method
     def _grab_surrounding_text(self):
-        """Return the full text content of the focused text field via AXValue.
+        """Return (before_text, after_text) around the cursor via Accessibility API.
 
-        Used to give the cleanup model context about names, terms, and writing
-        style already present in the field.  Returns '' on failure.
+        Uses AXValue for the full text and AXSelectedTextRange for the cursor
+        position.  Falls back gracefully if either attribute is unavailable.
         """
         try:
             system_wide = ApplicationServices.AXUIElementCreateSystemWide()
             err, focused = ApplicationServices.AXUIElementCopyAttributeValue(
                 system_wide, "AXFocusedUIElement", None)
             if err != 0 or focused is None:
-                return ""
+                return ("", "")
+
             err, value = ApplicationServices.AXUIElementCopyAttributeValue(
                 focused, "AXValue", None)
             if err != 0 or not value:
-                return ""
-            return str(value)
+                return ("", "")
+            full_text = str(value)
+
+            # Try to get cursor position
+            err, range_val = ApplicationServices.AXUIElementCopyAttributeValue(
+                focused, "AXSelectedTextRange", None)
+            if err != 0 or range_val is None:
+                return (full_text[-300:], "")
+
+            try:
+                r = range_val.rangeValue()
+                loc, length = r.location, r.length
+            except Exception:
+                return (full_text[-300:], "")
+
+            before = full_text[:loc][-300:]
+            after = full_text[loc + length:][:200]
+            return (before, after)
         except Exception:
-            logger.debug("AXValue failed", exc_info=True)
-            return ""
+            logger.debug("_grab_surrounding_text failed", exc_info=True)
+            return ("", "")
 
     @objc.python_method
     def _set_clipboard(self, text):
@@ -1450,7 +1514,7 @@ TIPS
                 voice_instruction=voice_text,
                 model=self.config.context_model,
                 app_context=app_ctx,
-                surrounding_text=self._surrounding_text,
+                before_text=self._before_text, after_text=self._after_text,
             )
             if not response or not response.strip():
                 self._run_on_main(lambda: self._ui_error("No response generated."))
@@ -1504,7 +1568,7 @@ TIPS
             app_ctx = self._active_app if self.config.context_cleanup else ""
             text = self.transcriber.transcribe(
                 audio_data, app_context=app_ctx,
-                surrounding_text=self._surrounding_text,
+                before_text=self._before_text, after_text=self._after_text,
             )
             if not text or not text.strip():
                 self._run_on_main(lambda: self._ui_error("No speech detected."))

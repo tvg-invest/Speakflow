@@ -20,6 +20,8 @@ class Transcriber:
         auto_detect: bool = True,
         ai_cleanup: bool = True,
         cleanup_model: str = "gpt-4o-mini",
+        editing_strength: str = "medium",
+        personal_dictionary: list | None = None,
     ) -> None:
         self.client = openai.OpenAI(api_key=api_key)
         self.model = model
@@ -27,17 +29,22 @@ class Transcriber:
         self.auto_detect = auto_detect
         self.ai_cleanup = ai_cleanup
         self.cleanup_model = cleanup_model
+        self.editing_strength = editing_strength
+        self.personal_dictionary = personal_dictionary or []
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def transcribe(self, audio_data: bytes, app_context: str = "", surrounding_text: str = "") -> str:
+    def transcribe(self, audio_data: bytes, app_context: str = "",
+                   before_text: str = "", after_text: str = "") -> str:
         """Transcribe WAV audio bytes into text.
 
         Args:
             audio_data: Raw WAV audio content.
             app_context: Name of the frontmost app (for context-aware cleanup).
+            before_text: Text before cursor in the active text field.
+            after_text: Text after cursor in the active text field.
 
         Returns:
             The transcribed (and optionally cleaned-up) text.
@@ -54,6 +61,8 @@ class Transcriber:
         }
         if not self.auto_detect:
             kwargs["language"] = self.language
+        if self.personal_dictionary:
+            kwargs["prompt"] = ", ".join(self.personal_dictionary)
 
         try:
             logger.debug(
@@ -86,12 +95,14 @@ class Transcriber:
         # Whisper often prepends dashes when it hears a brief pause or noise
         raw_text = raw_text.strip().lstrip("-–—").strip()
 
-        if self.ai_cleanup and raw_text:
-            return self.cleanup_text(raw_text, self.language, app_context, surrounding_text)
+        if self.editing_strength != "off" and raw_text:
+            return self.cleanup_text(raw_text, self.language, app_context,
+                                     before_text, after_text)
 
         return raw_text
 
-    def cleanup_text(self, raw_text: str, language: str, app_context: str = "", surrounding_text: str = "") -> str:
+    def cleanup_text(self, raw_text: str, language: str, app_context: str = "",
+                     before_text: str = "", after_text: str = "") -> str:
         """Use a GPT model to clean up a raw speech transcription.
 
         Args:
@@ -148,26 +159,48 @@ class Transcriber:
                     "- Use complete sentences with proper punctuation."
                 )
 
-        # Surrounding-text context for spelling/style consistency
+        # Cursor-aware context for spelling/style consistency
         surrounding_hint = ""
-        if surrounding_text:
-            # Last ~500 chars for context, never repeat them
-            snippet = surrounding_text[-500:]
+        if before_text or after_text:
+            parts = []
+            if before_text:
+                parts.append(f"TEXT BEFORE CURSOR (already written):\n---\n{before_text}\n---")
+            if after_text:
+                parts.append(f"TEXT AFTER CURSOR (comes next):\n---\n{after_text}\n---")
             surrounding_hint = (
-                "\n\nCONTEXT — the text below is already in the text field. Use it "
-                "ONLY as reference for spelling of names, terms, and matching style. "
-                "Do NOT repeat or include any of this text in your output:\n"
-                f"---\n{snippet}\n---"
+                "\n\nCONTEXT — the text below is already in the text field around the "
+                "user's cursor. Use it ONLY as reference for spelling of names, terms, "
+                "and matching style. Do NOT repeat or include any of this text in your "
+                "output:\n" + "\n".join(parts)
             )
 
-        system_prompt = (
-            "You are a text cleanup assistant. Clean up the following speech "
-            "transcription. Fix punctuation, remove filler words (like 'um', "
-            "'uh', '\u00f8h', 'alts\u00e5'), fix obvious speech-to-text errors, but "
-            "preserve the original meaning and language. Keep the same language "
-            "as the input. Output ONLY the cleaned text, nothing else."
-            + context_rules + surrounding_hint
-        )
+        # Personal dictionary hint
+        dictionary_hint = ""
+        if self.personal_dictionary:
+            words = ", ".join(self.personal_dictionary)
+            dictionary_hint = (
+                f"\n\nPERSONAL DICTIONARY — preserve these words/names exactly "
+                f"as spelled: {words}"
+            )
+
+        if self.editing_strength == "light":
+            system_prompt = (
+                "You are a text cleanup assistant. Make MINIMAL changes to the "
+                "following speech transcription: fix punctuation and capitalization, "
+                "remove filler words (like 'um', 'uh', '\u00f8h', 'alts\u00e5'). "
+                "Do NOT reword, rephrase, or restructure. Keep the exact same "
+                "language. Output ONLY the cleaned text."
+                + context_rules + surrounding_hint + dictionary_hint
+            )
+        else:
+            system_prompt = (
+                "You are a text cleanup assistant. Clean up the following speech "
+                "transcription. Fix punctuation, remove filler words (like 'um', "
+                "'uh', '\u00f8h', 'alts\u00e5'), fix obvious speech-to-text errors, but "
+                "preserve the original meaning and language. Keep the same language "
+                "as the input. Output ONLY the cleaned text, nothing else."
+                + context_rules + surrounding_hint + dictionary_hint
+            )
 
         try:
             logger.debug(
@@ -211,7 +244,8 @@ class Transcriber:
         voice_instruction: str,
         model: str = "gpt-4o",
         app_context: str = "",
-        surrounding_text: str = "",
+        before_text: str = "",
+        after_text: str = "",
     ) -> str:
         """Use GPT to respond based on selected text and a voice instruction.
 
@@ -220,6 +254,8 @@ class Transcriber:
             voice_instruction: Transcribed voice command from the user.
             model: GPT model to use.
             app_context: Frontmost app name for tone adaptation.
+            before_text: Text before cursor in the active text field.
+            after_text: Text after cursor in the active text field.
 
         Returns:
             The generated response text.
@@ -229,11 +265,23 @@ class Transcriber:
             context_hint = f"\nThe user is currently in: {app_context}"
 
         surrounding_hint = ""
-        if surrounding_text:
-            snippet = surrounding_text[-500:]
+        if before_text or after_text:
+            parts = []
+            if before_text:
+                parts.append(f"Text before cursor:\n---\n{before_text}\n---")
+            if after_text:
+                parts.append(f"Text after cursor:\n---\n{after_text}\n---")
             surrounding_hint = (
                 "\n\nSurrounding text in the text field (for context only, "
-                "do NOT repeat it):\n---\n" + snippet + "\n---"
+                "do NOT repeat it):\n" + "\n".join(parts)
+            )
+
+        dictionary_hint = ""
+        if self.personal_dictionary:
+            words = ", ".join(self.personal_dictionary)
+            dictionary_hint = (
+                f"\n\nPERSONAL DICTIONARY — preserve these words/names exactly "
+                f"as spelled: {words}"
             )
 
         system_prompt = (
@@ -242,7 +290,7 @@ class Transcriber:
             "Follow the instruction precisely. If asked to draft a reply, "
             "write ONLY the reply — no explanations, no labels, no quotes "
             "around it. Match the language of the user's voice instruction."
-            + context_hint + surrounding_hint
+            + context_hint + surrounding_hint + dictionary_hint
         )
 
         user_msg = (
