@@ -203,19 +203,24 @@ class SpeakFlowUI(NSObject):
 
     @objc.python_method
     def _check_permissions(self):
+        # Trigger system prompt on first launch (helps register the app).
+        # On subsequent checks, only check silently.
+        prompt = not self.config.get("ax_prompted", False)
         trusted = ApplicationServices.AXIsProcessTrustedWithOptions(
-            {ApplicationServices.kAXTrustedCheckOptionPrompt: False}
+            {ApplicationServices.kAXTrustedCheckOptionPrompt: prompt}
         )
+        if prompt:
+            self.config.set("ax_prompted", True)
         self._has_accessibility = trusted
         if not trusted:
             logger.warning("Accessibility not granted.")
             self.status_label.setStringValue_(
-                "Accessibility access required — click below")
+                "Enable Accessibility, then restart the app")
             self.status_label.setTextColor_(_ORANGE())
-            self._show_ax_fix_button()
+            self._show_ax_buttons()
             return
-        # Permission granted — hide fix button if it was showing
-        self._hide_ax_fix_button()
+        # Permission granted — hide fix buttons if they were showing
+        self._hide_ax_buttons()
         AVCaptureDevice = objc.lookUpClass('AVCaptureDevice')
         mic_status = AVCaptureDevice.authorizationStatusForMediaType_('soun')
         if mic_status == 0:
@@ -227,39 +232,70 @@ class SpeakFlowUI(NSObject):
             self.status_label.setTextColor_(_ORANGE())
 
     @objc.python_method
-    def _show_ax_fix_button(self):
-        """Show a button in the status card to open Accessibility settings."""
+    def _show_ax_buttons(self):
+        """Show buttons to open Accessibility settings and restart the app."""
         if hasattr(self, '_ax_fix_btn') and self._ax_fix_btn is not None:
             self._ax_fix_btn.setHidden_(False)
+            self._ax_restart_btn.setHidden_(False)
             self.rec_button.setHidden_(True)
             return
-        # Replace the record button area with an accessibility fix button
         parent = self.rec_button.superview()
         frame = self.rec_button.frame()
+        cw = parent.frame().size.width
+        btn_w = 160
+        gap = 10
+        total = btn_w * 2 + gap
+        bx = (cw - total) / 2
+
+        # "Open Settings" button
         self._ax_fix_btn = NSButton.alloc().initWithFrame_(
-            NSMakeRect(frame.origin.x - 20, frame.origin.y, frame.size.width + 40, frame.size.height))
+            NSMakeRect(bx, frame.origin.y, btn_w, frame.size.height))
         self._ax_fix_btn.setButtonType_(0)
         self._ax_fix_btn.setBordered_(False)
         self._ax_fix_btn.setWantsLayer_(True)
         self._ax_fix_btn.setFocusRingType_(1)
         self._ax_fix_btn.layer().setCornerRadius_(8)
         self._ax_fix_btn.layer().setBackgroundColor_(_ORANGE().CGColor())
-        self._set_btn_title(self._ax_fix_btn, "Open Accessibility Settings")
+        self._set_btn_title(self._ax_fix_btn, "Open Settings")
         self._ax_fix_btn.setTarget_(self)
         self._ax_fix_btn.setAction_("openAccessibilitySettings:")
         parent.addSubview_(self._ax_fix_btn)
+
+        # "Restart" button
+        self._ax_restart_btn = NSButton.alloc().initWithFrame_(
+            NSMakeRect(bx + btn_w + gap, frame.origin.y, btn_w, frame.size.height))
+        self._ax_restart_btn.setButtonType_(0)
+        self._ax_restart_btn.setBordered_(False)
+        self._ax_restart_btn.setWantsLayer_(True)
+        self._ax_restart_btn.setFocusRingType_(1)
+        self._ax_restart_btn.layer().setCornerRadius_(8)
+        self._ax_restart_btn.layer().setBackgroundColor_(_GREEN().CGColor())
+        self._set_btn_title(self._ax_restart_btn, "Restart App")
+        self._ax_restart_btn.setTarget_(self)
+        self._ax_restart_btn.setAction_("restartForAccessibility:")
+        parent.addSubview_(self._ax_restart_btn)
+
         self.rec_button.setHidden_(True)
 
     @objc.python_method
-    def _hide_ax_fix_button(self):
-        """Hide the accessibility fix button and restore the record button."""
-        if hasattr(self, '_ax_fix_btn') and self._ax_fix_btn is not None:
-            self._ax_fix_btn.setHidden_(True)
+    def _hide_ax_buttons(self):
+        """Hide the accessibility fix buttons and restore the record button."""
+        for attr in ('_ax_fix_btn', '_ax_restart_btn'):
+            btn = getattr(self, attr, None)
+            if btn is not None:
+                btn.setHidden_(True)
         self.rec_button.setHidden_(False)
 
     def openAccessibilitySettings_(self, sender):
+        # Also trigger the system prompt so macOS registers the app
+        ApplicationServices.AXIsProcessTrustedWithOptions(
+            {ApplicationServices.kAXTrustedCheckOptionPrompt: True}
+        )
         import subprocess as sp
         sp.Popen(["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
+
+    def restartForAccessibility_(self, sender):
+        self._restart_app()
 
     @objc.python_method
     def _start_ax_poll(self):
@@ -279,7 +315,7 @@ class SpeakFlowUI(NSObject):
             self._has_accessibility = True
             self._ax_timer.invalidate()
             self._ax_timer = None
-            self._hide_ax_fix_button()
+            self._hide_ax_buttons()
             # Start the listeners now that we have permission
             if not self.hotkey_listener.is_listening:
                 self.hotkey_listener.start()
