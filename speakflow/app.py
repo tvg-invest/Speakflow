@@ -151,11 +151,6 @@ class SpeakFlowUI(NSObject):
             on_activate=self._on_activate,
             on_deactivate=self._on_deactivate,
         )
-        self.context_listener = HotkeyListener(
-            hotkey_string=self.config.context_hotkey,
-            on_activate=self._on_context_activate,
-            on_deactivate=self._on_context_deactivate,
-        )
 
         set_volume(self.config.sound_volume)
 
@@ -170,7 +165,6 @@ class SpeakFlowUI(NSObject):
         # Start listeners immediately — NSEvent monitors work for modifier
         # keys even without explicit Accessibility trust on some systems.
         self.hotkey_listener.start()
-        self.context_listener.start()
 
         # Prompt for Accessibility if not yet granted (improves reliability)
         self._ax_poll_timer = None
@@ -462,20 +456,7 @@ class SpeakFlowUI(NSObject):
         self.hotkey_btn.setAction_("captureHotkey:")
         ry -= row_h
 
-        # Row 2 — Context Hotkey (modifier-only)
-        self._label(stc, "Context Key", lx, ry + 6, 100, 24,
-                    NSFont.systemFontOfSize_(13), _DIM())
-        ctx_text = self.config.context_hotkey + " (hold)"
-        self.ctx_hotkey_display = self._label(stc, ctx_text, lx + 100, ry + 6, cw - 250, 24,
-                                              NSFont.systemFontOfSize_weight_(13, NSFontWeightSemibold),
-                                              _PURPLE())
-        self.ctx_hotkey_btn = self._ghost_btn(stc, "Change",
-                                             rx - 90, ry + 5, 90, 26)
-        self.ctx_hotkey_btn.setTarget_(self)
-        self.ctx_hotkey_btn.setAction_("captureContextHotkey:")
-        ry -= row_h
-
-        # Row 3 — Language
+        # Row 2 — Language
         self._label(stc, "Language", lx, ry + 6, 100, 24,
                     NSFont.systemFontOfSize_(13), _DIM())
         self.lang_popup = NSPopUpButton.alloc().initWithFrame_pullsDown_(
@@ -713,10 +694,7 @@ class SpeakFlowUI(NSObject):
         if self._processing:
             return
         if self._recording:
-            if self._context_mode:
-                self._on_context_deactivate()
-            else:
-                self._on_deactivate()
+            self._on_deactivate()
         else:
             self._float_triggered = True
             self._on_activate()
@@ -813,9 +791,6 @@ class SpeakFlowUI(NSObject):
         else:
             hotkey_desc = f"Press  {hotkey_str.upper()}  to toggle recording"
 
-        ctx_key = self.config.context_hotkey
-        ctx_desc = f"Hold  {ctx_key.upper()}  to record with context"
-
         guide = f"""Welcome to SpeakFlow
 
 Voice-to-text that types what you say, right where your cursor is.
@@ -828,24 +803,22 @@ QUICK START
 3.  Use the hotkey to start dictating — text appears at your cursor
 
 
-DICTATION (HOTKEY)
+HOW IT WORKS
 
 {hotkey_desc}.
-SpeakFlow transcribes your speech and pastes the text at your cursor.
-Works in any app — just place your cursor where you want text to appear.
 
+SpeakFlow automatically detects what you want:
 
-CONTEXT MODE (CONTEXT KEY)
+  No text selected — your speech is transcribed and typed at your cursor.
 
-{ctx_desc}.
-Select text first, then hold the Context Key to give a voice instruction.
-SpeakFlow reads the selected text + your voice command, and uses AI to
-transform, answer, or edit based on what you said.
+  Text selected — SpeakFlow grabs the selection as context, listens to
+  your voice instruction, and uses AI to respond. The result is copied
+  to your clipboard.
 
-Examples:
-  • Select a paragraph → hold {ctx_key.upper()} → say "make this more formal"
-  • Select code → hold {ctx_key.upper()} → say "add error handling"
-  • Select an email → hold {ctx_key.upper()} → say "write a reply"
+Examples with context:
+  • Select a paragraph → hold {hotkey_str.upper()} → say "make this more formal"
+  • Select code → hold {hotkey_str.upper()} → say "add error handling"
+  • Select an email → hold {hotkey_str.upper()} → say "write a reply"
 
 
 FLOATING INDICATOR
@@ -859,7 +832,7 @@ instead of pasted, so you can paste it wherever you want.
 
 SETTINGS
 
-  • Hotkey / Context Key — change the keyboard shortcuts
+  • Hotkey — change the keyboard shortcut
   • Language — set your dictation language or use auto-detect
   • AI Cleanup — automatically fixes grammar, filler words, and formatting
   • Smart Context — enables AI-powered context understanding
@@ -874,12 +847,6 @@ TIPS
   • Check "View History" to see and copy previous transcriptions
   • After an update, you may need to re-enable Accessibility permissions
     in System Settings → Privacy & Security → Accessibility
-
-
-KEYBOARD SHORTCUTS
-
-  {hotkey_str.upper()}  — Dictation (voice to text at cursor)
-  {ctx_key.upper()}  — Context mode (select text + voice command)
 """
 
         tv.setString_(guide)
@@ -941,10 +908,7 @@ KEYBOARD SHORTCUTS
 
     def toggleRecording_(self, sender):
         if self._recording:
-            if self._context_mode:
-                self._on_context_deactivate()
-            else:
-                self._on_deactivate()
+            self._on_deactivate()
         else:
             self._on_activate()
 
@@ -952,61 +916,6 @@ KEYBOARD SHORTCUTS
         self._capture_target = "main"
         self._start_hotkey_capture()
 
-    def captureContextHotkey_(self, sender):
-        self._capture_target = "context"
-        self._start_modifier_only_capture()
-
-    @objc.python_method
-    def _start_modifier_only_capture(self):
-        """Capture a single modifier key (ctrl/alt/cmd/shift) for context hotkey."""
-        try:
-            if self._capturing:
-                return
-            self._capturing = True
-            self._capture_single_mod = None
-            self.ctx_hotkey_display.setStringValue_("Press a modifier...")
-            self.ctx_hotkey_display.setTextColor_(_ACCENT())
-            self._set_btn_title(self.ctx_hotkey_btn, "Listening...",
-                                NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium),
-                                color=_ACCENT())
-            self.ctx_hotkey_btn.setEnabled_(False)
-
-            def _get_mods(flags):
-                mods = []
-                if flags & (1 << 18): mods.append("ctrl")
-                if flags & (1 << 20): mods.append("cmd")
-                if flags & (1 << 19): mods.append("alt")
-                if flags & (1 << 17): mods.append("shift")
-                return mods
-
-            def handler(event):
-                if not self._capturing:
-                    return event
-                # Escape key (keyDown) cancels capture
-                if event.type() == 10 and event.keyCode() == 53:
-                    self._remove_key_monitor()
-                    self._cancel_capture()
-                    return None
-                if event.type() != 12:  # Only NSFlagsChanged
-                    return event
-                mods = _get_mods(event.modifierFlags())
-                if len(mods) == 1 and self._capture_single_mod is None:
-                    self._capture_single_mod = mods[0]
-                elif len(mods) == 0 and self._capture_single_mod is not None:
-                    mod = self._capture_single_mod
-                    self._capture_single_mod = None
-                    self._remove_key_monitor()
-                    self._finish_capture(mod)
-                    return None
-                elif len(mods) > 1:
-                    self._capture_single_mod = None
-                return event
-
-            self._key_monitor = NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
-                (1 << 10) | (1 << 12), handler)  # keyDown + flagsChanged
-        except Exception:
-            logger.error("Modifier capture error:\n%s", traceback.format_exc())
-            self._capturing = False
 
     @objc.python_method
     def _start_hotkey_capture(self):
@@ -1017,20 +926,12 @@ KEYBOARD SHORTCUTS
             self._capture_single_mod = None
             # Listeners stay alive — _capturing flag suppresses their callbacks.
 
-            if self._capture_target == "main":
-                self.hotkey_display.setStringValue_("Press a key...")
-                self.hotkey_display.setTextColor_(_ACCENT())
-                self._set_btn_title(self.hotkey_btn, "Listening...",
-                                    NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium),
-                                    color=_ACCENT())
-                self.hotkey_btn.setEnabled_(False)
-            else:
-                self.ctx_hotkey_display.setStringValue_("Press a key...")
-                self.ctx_hotkey_display.setTextColor_(_ACCENT())
-                self._set_btn_title(self.ctx_hotkey_btn, "Listening...",
-                                    NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium),
-                                    color=_ACCENT())
-                self.ctx_hotkey_btn.setEnabled_(False)
+            self.hotkey_display.setStringValue_("Press a key...")
+            self.hotkey_display.setTextColor_(_ACCENT())
+            self._set_btn_title(self.hotkey_btn, "Listening...",
+                                NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium),
+                                color=_ACCENT())
+            self.hotkey_btn.setEnabled_(False)
 
             _KEYCODE_MAP = {
                 0: "a", 1: "s", 2: "d", 3: "f", 4: "h", 5: "g", 6: "z",
@@ -1109,49 +1010,30 @@ KEYBOARD SHORTCUTS
     def _cancel_capture(self):
         """Cancel hotkey capture and restore UI."""
         self._capturing = False
-        if self._capture_target == "main":
-            hotkey_text = self.config.hotkey
-            if is_modifier_only(hotkey_text):
-                hotkey_text += " (hold)"
-            self.hotkey_display.setStringValue_(hotkey_text)
-            self.hotkey_display.setTextColor_(_GOLD())
-            self._set_btn_title(self.hotkey_btn, "Change",
-                                NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium),
-                                color=_DIM())
-            self.hotkey_btn.setEnabled_(True)
-        else:
-            self.ctx_hotkey_display.setStringValue_(f"{self.config.context_hotkey} (hold)")
-            self.ctx_hotkey_display.setTextColor_(_PURPLE())
-            self._set_btn_title(self.ctx_hotkey_btn, "Change",
-                                NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium),
-                                color=_DIM())
-            self.ctx_hotkey_btn.setEnabled_(True)
+        hotkey_text = self.config.hotkey
+        if is_modifier_only(hotkey_text):
+            hotkey_text += " (hold)"
+        self.hotkey_display.setStringValue_(hotkey_text)
+        self.hotkey_display.setTextColor_(_GOLD())
+        self._set_btn_title(self.hotkey_btn, "Change",
+                            NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium),
+                            color=_DIM())
+        self.hotkey_btn.setEnabled_(True)
 
     @objc.python_method
     def _finish_capture(self, new_hotkey):
         self._capturing = False
         try:
-            if self._capture_target == "main":
-                self.config.hotkey = new_hotkey
-                self.hotkey_listener.update_hotkey(new_hotkey)
-                display = f"{new_hotkey} (hold)" if is_modifier_only(new_hotkey) else new_hotkey
-                self.hotkey_display.setStringValue_(display)
-                self.hotkey_display.setTextColor_(_GOLD())
-                self._set_btn_title(self.hotkey_btn, "Change",
-                                    NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium),
-                                    color=_DIM())
-                self.hotkey_btn.setEnabled_(True)
-                logger.info("Hotkey changed to %s.", new_hotkey)
-            else:
-                self.config.context_hotkey = new_hotkey
-                self.context_listener.update_hotkey(new_hotkey)
-                self.ctx_hotkey_display.setStringValue_(f"{new_hotkey} (hold)")
-                self.ctx_hotkey_display.setTextColor_(_PURPLE())
-                self._set_btn_title(self.ctx_hotkey_btn, "Change",
-                                    NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium),
-                                    color=_DIM())
-                self.ctx_hotkey_btn.setEnabled_(True)
-                logger.info("Context hotkey changed to %s.", new_hotkey)
+            self.config.hotkey = new_hotkey
+            self.hotkey_listener.update_hotkey(new_hotkey)
+            display = f"{new_hotkey} (hold)" if is_modifier_only(new_hotkey) else new_hotkey
+            self.hotkey_display.setStringValue_(display)
+            self.hotkey_display.setTextColor_(_GOLD())
+            self._set_btn_title(self.hotkey_btn, "Change",
+                                NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium),
+                                color=_DIM())
+            self.hotkey_btn.setEnabled_(True)
+            logger.info("Hotkey changed to %s.", new_hotkey)
         except Exception:
             logger.error("Hotkey apply error:\n%s", traceback.format_exc())
 
@@ -1376,29 +1258,53 @@ KEYBOARD SHORTCUTS
                 return
             self._recording = True
         self._active_app = self._run_on_main_sync(self._get_active_app)
-        self._run_on_main(self._ui_recording)
+
+        # Auto-detect context: try to grab selection from the active app
+        self._selected_text = ""
+        self._context_mode = False
+        if not self._float_triggered:
+            sel = self._run_on_main_sync(self._grab_selection)
+            if sel and sel.strip():
+                self._selected_text = sel
+                self._context_mode = True
+                logger.info("Context mode: grabbed %d chars from %s.",
+                            len(sel), self._active_app)
+
+        # Re-check: deactivate may have raced us during _grab_selection
+        if not self._recording:
+            self._context_mode = False
+            self._processing = False
+            self._float_triggered = False
+            self._run_on_main(self._ui_ready)
+            return
+
+        if self._context_mode:
+            self._run_on_main(lambda: self._show_float("recording", _PURPLE()))
+            self._run_on_main(self._ui_context_recording)
+        else:
+            self._run_on_main(self._ui_recording)
+
         try:
             if self.config.sound_feedback:
                 play_start_sound()
-            # Defensive: clean up leaked recorder state from previous session
             if self.audio_recorder.is_recording:
                 try:
                     self.audio_recorder.stop_recording()
                 except Exception:
                     pass
-            # Re-check: deactivate may have raced us during setup
             if not self._recording:
+                self._context_mode = False
                 self._float_triggered = False
                 self._processing = False
                 self._run_on_main(self._ui_ready)
                 return
             self.audio_recorder.start_recording()
-            # Final check: if deactivate raced after start, stop immediately
             if not self._recording:
                 try:
                     self.audio_recorder.stop_recording()
                 except Exception:
                     pass
+                self._context_mode = False
                 self._float_triggered = False
                 self._processing = False
                 self._run_on_main(self._ui_ready)
@@ -1407,6 +1313,7 @@ KEYBOARD SHORTCUTS
         except Exception:
             logger.error("Record start failed:\n%s", traceback.format_exc())
             self._recording = False
+            self._context_mode = False
             self._processing = False
             self._float_triggered = False
             self._run_on_main(self._ui_ready)
@@ -1415,7 +1322,10 @@ KEYBOARD SHORTCUTS
     def _on_deactivate(self):
         if self._capturing or not self._recording:
             return
-        threading.Thread(target=self._stop_and_transcribe, daemon=True).start()
+        if self._context_mode:
+            threading.Thread(target=self._context_stop_and_process, daemon=True).start()
+        else:
+            threading.Thread(target=self._stop_and_transcribe, daemon=True).start()
 
     @objc.python_method
     def _on_silence(self):
@@ -1441,9 +1351,14 @@ KEYBOARD SHORTCUTS
 
     @objc.python_method
     def _grab_selection(self):
-        """Simulate Cmd+C and return clipboard contents, preserving original clipboard."""
+        """Simulate Cmd+C and return selected text, or '' if nothing selected.
+
+        Uses clipboard changeCount to reliably detect whether Cmd+C actually
+        copied something.  Restores the original clipboard afterwards.
+        """
         pb = NSPasteboard.generalPasteboard()
         original = pb.stringForType_("public.utf8-plain-text") or ""
+        count_before = pb.changeCount()
 
         src = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStatePrivate)
         c_down = Quartz.CGEventCreateKeyboardEvent(src, 8, True)
@@ -1454,9 +1369,14 @@ KEYBOARD SHORTCUTS
         Quartz.CGEventPost(Quartz.kCGAnnotatedSessionEventTap, c_up)
         _time.sleep(0.15)
 
+        count_after = pb.changeCount()
+        if count_after == count_before:
+            # Clipboard didn't change → nothing was selected
+            return ""
+
         selection = pb.stringForType_("public.utf8-plain-text") or ""
 
-        # Restore original clipboard (clear even if original was empty)
+        # Restore original clipboard
         pb.clearContents()
         if original:
             pb.setString_forType_(original, "public.utf8-plain-text")
@@ -1469,67 +1389,6 @@ KEYBOARD SHORTCUTS
         pb = NSPasteboard.generalPasteboard()
         pb.clearContents()
         pb.setString_forType_(text, "public.utf8-plain-text")
-
-    @objc.python_method
-    def _on_context_activate(self):
-        if self._capturing:
-            return
-        if not self.config.openai_api_key:
-            self._run_on_main(lambda: self._ui_error("Add your API key first"))
-            return
-        with self._stop_lock:
-            if self._recording or self._processing:
-                return
-            self._recording = True
-            self._context_mode = True
-        self._active_app = self._run_on_main_sync(self._get_active_app)
-        self._selected_text = self._run_on_main_sync(self._grab_selection)
-        # Re-check: deactivate may have raced us during _grab_selection
-        if not self._recording:
-            self._context_mode = False
-            self._processing = False
-            self._run_on_main(self._ui_ready)
-            return
-        logger.info("Context mode: grabbed %d chars from %s.",
-                    len(self._selected_text), self._active_app)
-        self._run_on_main(lambda: self._show_float("recording", _PURPLE()))
-        self._run_on_main(self._ui_context_recording)
-        try:
-            if self.config.sound_feedback:
-                play_start_sound()
-            # Defensive: clean up leaked recorder state
-            if self.audio_recorder.is_recording:
-                try:
-                    self.audio_recorder.stop_recording()
-                except Exception:
-                    pass
-            if not self._recording:
-                self._context_mode = False
-                self._processing = False
-                self._run_on_main(self._ui_ready)
-                return
-            self.audio_recorder.start_recording()
-            # Final check: if deactivate raced after start, stop immediately
-            if not self._recording:
-                try:
-                    self.audio_recorder.stop_recording()
-                except Exception:
-                    pass
-                self._context_mode = False
-                self._processing = False
-                self._run_on_main(self._ui_ready)
-                return
-        except Exception:
-            logger.error("Context record start failed:\n%s", traceback.format_exc())
-            self._recording = False
-            self._context_mode = False
-            self._run_on_main(self._ui_ready)
-
-    @objc.python_method
-    def _on_context_deactivate(self):
-        if self._capturing or not self._recording or not self._context_mode:
-            return
-        threading.Thread(target=self._context_stop_and_process, daemon=True).start()
 
     @objc.python_method
     def _context_stop_and_process(self):
