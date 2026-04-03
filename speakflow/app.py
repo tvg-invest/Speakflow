@@ -241,11 +241,38 @@ class SpeakFlowUI(NSObject):
         self.context_listener.stop()
         self.hotkey_listener.start()
         self.context_listener.start()
+        # Start watchdog that restarts dead listeners
+        if getattr(self, '_listener_watchdog', None) is None:
+            self._listener_watchdog = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+                3.0, self, "_listenerWatchdog:", None, True)
         # Update status
         self.status_label.setStringValue_("Ready — hold hotkey to dictate")
         self.status_label.setTextColor_(
             NSColor.colorWithCalibratedRed_green_blue_alpha_(0.6, 0.6, 0.6, 1.0))
         self._check_api_key()
+
+    def _listenerWatchdog_(self, timer):
+        """Restart hotkey listeners if their threads have died."""
+        restarted = False
+        if not self.hotkey_listener.is_listening:
+            logger.warning("Hotkey listener died — restarting.")
+            self.hotkey_listener.stop()
+            self.hotkey_listener.start()
+            restarted = True
+        if not self.context_listener.is_listening:
+            logger.warning("Context listener died — restarting.")
+            self.context_listener.stop()
+            self.context_listener.start()
+            restarted = True
+        if restarted:
+            # Reset recording state in case it was stuck
+            with self._stop_lock:
+                if self._recording and not self.audio_recorder.is_recording:
+                    self._recording = False
+                    self._processing = False
+                    self._context_mode = False
+                    self._float_triggered = False
+                    self._run_on_main(self._ui_ready)
 
     @objc.python_method
     def show_window(self):

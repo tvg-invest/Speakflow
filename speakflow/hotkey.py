@@ -126,9 +126,22 @@ class HotkeyListener:
         if self._listener is not None:
             logger.warning("Listener already running; ignoring start().")
             return
+
+        def _safe_press(key):
+            try:
+                self._on_press(key)
+            except Exception:
+                logger.exception("Exception in _on_press — swallowed to keep listener alive")
+
+        def _safe_release(key):
+            try:
+                self._on_release(key)
+            except Exception:
+                logger.exception("Exception in _on_release — swallowed to keep listener alive")
+
         self._listener = Listener(
-            on_press=self._on_press,
-            on_release=self._on_release,
+            on_press=_safe_press,
+            on_release=_safe_release,
         )
         self._listener.daemon = True
         self._listener.start()
