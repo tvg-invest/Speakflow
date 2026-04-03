@@ -1351,37 +1351,27 @@ TIPS
 
     @objc.python_method
     def _grab_selection(self):
-        """Simulate Cmd+C and return selected text, or '' if nothing selected.
+        """Return selected text from the focused app using Accessibility API.
 
-        Uses clipboard changeCount to reliably detect whether Cmd+C actually
-        copied something.  Restores the original clipboard afterwards.
+        Uses AXSelectedText on the focused UI element — no simulated keystrokes,
+        so no system alert sounds.  Returns '' if nothing is selected or if the
+        app doesn't support the Accessibility text API.
         """
-        pb = NSPasteboard.generalPasteboard()
-        original = pb.stringForType_("public.utf8-plain-text") or ""
-        count_before = pb.changeCount()
-
-        src = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStatePrivate)
-        c_down = Quartz.CGEventCreateKeyboardEvent(src, 8, True)
-        Quartz.CGEventSetFlags(c_down, Quartz.kCGEventFlagMaskCommand)
-        Quartz.CGEventPost(Quartz.kCGAnnotatedSessionEventTap, c_down)
-        c_up = Quartz.CGEventCreateKeyboardEvent(src, 8, False)
-        Quartz.CGEventSetFlags(c_up, Quartz.kCGEventFlagMaskCommand)
-        Quartz.CGEventPost(Quartz.kCGAnnotatedSessionEventTap, c_up)
-        _time.sleep(0.15)
-
-        count_after = pb.changeCount()
-        if count_after == count_before:
-            # Clipboard didn't change → nothing was selected
+        try:
+            system_wide = ApplicationServices.AXUIElementCreateSystemWide()
+            err, focused = ApplicationServices.AXUIElementCopyAttributeValue(
+                system_wide, "AXFocusedUIElement", None)
+            if err != 0 or focused is None:
+                return ""
+            err, selected = ApplicationServices.AXUIElementCopyAttributeValue(
+                focused, "AXSelectedText", None)
+            if err != 0 or not selected:
+                return ""
+            text = str(selected).strip()
+            return text if text else ""
+        except Exception:
+            logger.debug("AXSelectedText failed", exc_info=True)
             return ""
-
-        selection = pb.stringForType_("public.utf8-plain-text") or ""
-
-        # Restore original clipboard
-        pb.clearContents()
-        if original:
-            pb.setString_forType_(original, "public.utf8-plain-text")
-
-        return selection
 
     @objc.python_method
     def _set_clipboard(self, text):
