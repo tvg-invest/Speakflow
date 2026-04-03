@@ -78,11 +78,17 @@ cc -o "$APP_DIR/Contents/MacOS/SpeakFlow" launcher.c
 # macOS ties trust to the binary's code signature — using an external
 # Python (e.g. Xcode's or Homebrew's) causes trust to be revoked on
 # every restart.
-VENV_PYTHON="$INSTALL_DIR/venv/bin/python3"
-REAL_PYTHON="$(python3 -c "import sys; print(sys.executable)")"
+REAL_PYTHON="$(python3 -c "import os,sys; print(os.path.realpath(sys.executable))")"
 if [ -f "$REAL_PYTHON" ]; then
     cp "$REAL_PYTHON" "$APP_DIR/Contents/MacOS/python3"
     chmod +x "$APP_DIR/Contents/MacOS/python3"
+    # Fix framework dylib reference to absolute path so the embedded
+    # binary can find its Python3 framework outside the bundle.
+    PY_FWDIR="$(dirname "$(dirname "$REAL_PYTHON")")"
+    if [ -f "$PY_FWDIR/Python3" ]; then
+        install_name_tool -change "@executable_path/../Python3" \
+            "$PY_FWDIR/Python3" "$APP_DIR/Contents/MacOS/python3" 2>/dev/null || true
+    fi
     echo "  Embedded Python binary into .app bundle."
 fi
 

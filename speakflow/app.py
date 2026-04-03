@@ -1408,11 +1408,19 @@ KEYBOARD SHORTCUTS
                         ["cc", "-o", str(app_bin / "SpeakFlow"), str(launcher_c)],
                         capture_output=True, timeout=30,
                     )
-                    import sys as _sys
-                    real_py = _sys.executable
-                    if real_py:
-                        import shutil
-                        shutil.copy2(real_py, str(app_bin / "python3"))
+                    import os as _os, sys as _sys, shutil
+                    real_py = _os.path.realpath(_sys.executable)
+                    if real_py and _os.path.isfile(real_py):
+                        embedded = str(app_bin / "python3")
+                        shutil.copy2(real_py, embedded)
+                        fw_dir = _os.path.dirname(_os.path.dirname(real_py))
+                        dylib = _os.path.join(fw_dir, "Python3")
+                        if _os.path.isfile(dylib):
+                            subprocess.run(
+                                ["install_name_tool", "-change",
+                                 "@executable_path/../Python3", dylib, embedded],
+                                capture_output=True, timeout=10,
+                            )
                     subprocess.run(
                         ["codesign", "--force", "--deep", "--sign", "-", str(_APP_PATH)],
                         capture_output=True, timeout=30,
