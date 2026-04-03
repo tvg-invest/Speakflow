@@ -167,9 +167,12 @@ class SpeakFlowUI(NSObject):
         self.window.makeKeyAndOrderFront_(None)
         NSApp.activateIgnoringOtherApps_(True)
 
-        # Defer listener start — NSEvent global monitors need Accessibility,
-        # which may not be granted yet.  The timer fires after the run loop
-        # starts so the system dialog can actually appear.
+        # Start listeners immediately — NSEvent monitors work for modifier
+        # keys even without explicit Accessibility trust on some systems.
+        self.hotkey_listener.start()
+        self.context_listener.start()
+
+        # Prompt for Accessibility if not yet granted (improves reliability)
         self._ax_poll_timer = None
         NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
             0.5, self, "_checkAccessibility:", None, False)
@@ -190,18 +193,18 @@ class SpeakFlowUI(NSObject):
             logger.warning("No OpenAI API key configured.")
 
     def _checkAccessibility_(self, timer):
-        """Deferred Accessibility check — starts listeners once trusted."""
+        """Prompt for Accessibility if not granted (non-blocking)."""
         trusted = ApplicationServices.AXIsProcessTrustedWithOptions(
             {ApplicationServices.kAXTrustedCheckOptionPrompt: True}
         )
         if trusted:
-            self._startListeners()
+            logger.info("Accessibility granted.")
+            if self._ax_poll_timer is not None:
+                self._ax_poll_timer.invalidate()
+                self._ax_poll_timer = None
         else:
-            logger.warning("Accessibility not granted — polling every 2s.")
-            self.status_label.setStringValue_(
-                "Grant Accessibility permission to enable hotkeys")
-            self.status_label.setTextColor_(_ORANGE())
-            # Poll until user grants permission in System Settings
+            logger.info("Accessibility not yet granted — prompting user.")
+            # Poll until granted so we can clear the status message
             if self._ax_poll_timer is None:
                 self._ax_poll_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
                     2.0, self, "_axPollTick:", None, True)
@@ -212,53 +215,9 @@ class SpeakFlowUI(NSObject):
             {ApplicationServices.kAXTrustedCheckOptionPrompt: False}
         )
         if trusted:
-            self._startListeners()
-
-    @objc.python_method
-    def _startListeners(self):
-        """Start (or restart) hotkey listeners after Accessibility is granted."""
-        logger.info("Accessibility granted — starting hotkey listeners.")
-        # Stop polling
-        if self._ax_poll_timer is not None:
+            logger.info("Accessibility granted (via poll).")
             self._ax_poll_timer.invalidate()
             self._ax_poll_timer = None
-        # (Re)start listeners
-        self.hotkey_listener.stop()
-        self.context_listener.stop()
-        self.hotkey_listener.start()
-        self.context_listener.start()
-        # Start watchdog that restarts dead listeners
-        if getattr(self, '_listener_watchdog', None) is None:
-            self._listener_watchdog = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-                3.0, self, "_listenerWatchdog:", None, True)
-        # Update status
-        self.status_label.setStringValue_("Ready — hold hotkey to dictate")
-        self.status_label.setTextColor_(
-            NSColor.colorWithCalibratedRed_green_blue_alpha_(0.6, 0.6, 0.6, 1.0))
-        self._check_api_key()
-
-    def _listenerWatchdog_(self, timer):
-        """Restart hotkey listeners if their threads have died."""
-        restarted = False
-        if not self.hotkey_listener.is_listening:
-            logger.warning("Hotkey listener died — restarting.")
-            self.hotkey_listener.stop()
-            self.hotkey_listener.start()
-            restarted = True
-        if not self.context_listener.is_listening:
-            logger.warning("Context listener died — restarting.")
-            self.context_listener.stop()
-            self.context_listener.start()
-            restarted = True
-        if restarted:
-            # Reset recording state in case it was stuck
-            with self._stop_lock:
-                if self._recording and not self.audio_recorder.is_recording:
-                    self._recording = False
-                    self._processing = False
-                    self._context_mode = False
-                    self._float_triggered = False
-                    self._run_on_main(self._ui_ready)
 
     @objc.python_method
     def show_window(self):
