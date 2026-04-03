@@ -141,8 +141,6 @@ class SpeakFlowUI(NSObject):
         self._history_win = None
         self._guide_win = None
         self._key_monitor = None
-        self._has_accessibility = False
-        self._ax_timer = None
 
         # Core components
         self.audio_recorder = AudioRecorder(
@@ -181,13 +179,11 @@ class SpeakFlowUI(NSObject):
         self._check_api_key()
         self._check_permissions()
 
-        # Only start hotkey listeners if Accessibility is granted.
-        # If not, a periodic timer will start them once permission arrives.
-        if self._has_accessibility:
-            self.hotkey_listener.start()
-            self.context_listener.start()
-        else:
-            self._start_ax_poll()
+        # Always start listeners — AXIsProcessTrustedWithOptions may
+        # return False even when Accessibility is actually granted
+        # (embedded Python binary vs .app bundle identity mismatch).
+        self.hotkey_listener.start()
+        self.context_listener.start()
 
         self.window.makeKeyAndOrderFront_(None)
         NSApp.activateIgnoringOtherApps_(True)
@@ -203,19 +199,7 @@ class SpeakFlowUI(NSObject):
 
     @objc.python_method
     def _check_permissions(self):
-        trusted = ApplicationServices.AXIsProcessTrustedWithOptions(
-            {ApplicationServices.kAXTrustedCheckOptionPrompt: False}
-        )
-        self._has_accessibility = trusted
-        if not trusted:
-            logger.warning("Accessibility not granted.")
-            self.status_label.setStringValue_(
-                "Enable Accessibility, then restart the app")
-            self.status_label.setTextColor_(_ORANGE())
-            self._show_ax_buttons()
-            return
-        # Permission granted — hide fix buttons if they were showing
-        self._hide_ax_buttons()
+        # Check microphone permission
         AVCaptureDevice = objc.lookUpClass('AVCaptureDevice')
         mic_status = AVCaptureDevice.authorizationStatusForMediaType_('soun')
         if mic_status == 0:
@@ -225,100 +209,6 @@ class SpeakFlowUI(NSObject):
             logger.warning("Microphone access denied.")
             self.status_label.setStringValue_("Grant Microphone access in System Settings")
             self.status_label.setTextColor_(_ORANGE())
-
-    @objc.python_method
-    def _show_ax_buttons(self):
-        """Show buttons to open Accessibility settings and restart the app."""
-        if hasattr(self, '_ax_fix_btn') and self._ax_fix_btn is not None:
-            self._ax_fix_btn.setHidden_(False)
-            self._ax_restart_btn.setHidden_(False)
-            self.rec_button.setHidden_(True)
-            return
-        parent = self.rec_button.superview()
-        frame = self.rec_button.frame()
-        cw = parent.frame().size.width
-        btn_w = 160
-        gap = 10
-        total = btn_w * 2 + gap
-        bx = (cw - total) / 2
-
-        # "Open Settings" button
-        self._ax_fix_btn = NSButton.alloc().initWithFrame_(
-            NSMakeRect(bx, frame.origin.y, btn_w, frame.size.height))
-        self._ax_fix_btn.setButtonType_(0)
-        self._ax_fix_btn.setBordered_(False)
-        self._ax_fix_btn.setWantsLayer_(True)
-        self._ax_fix_btn.setFocusRingType_(1)
-        self._ax_fix_btn.layer().setCornerRadius_(8)
-        self._ax_fix_btn.layer().setBackgroundColor_(_ORANGE().CGColor())
-        self._set_btn_title(self._ax_fix_btn, "Open Settings")
-        self._ax_fix_btn.setTarget_(self)
-        self._ax_fix_btn.setAction_("openAccessibilitySettings:")
-        parent.addSubview_(self._ax_fix_btn)
-
-        # "Restart" button
-        self._ax_restart_btn = NSButton.alloc().initWithFrame_(
-            NSMakeRect(bx + btn_w + gap, frame.origin.y, btn_w, frame.size.height))
-        self._ax_restart_btn.setButtonType_(0)
-        self._ax_restart_btn.setBordered_(False)
-        self._ax_restart_btn.setWantsLayer_(True)
-        self._ax_restart_btn.setFocusRingType_(1)
-        self._ax_restart_btn.layer().setCornerRadius_(8)
-        self._ax_restart_btn.layer().setBackgroundColor_(_GREEN().CGColor())
-        self._set_btn_title(self._ax_restart_btn, "Restart App")
-        self._ax_restart_btn.setTarget_(self)
-        self._ax_restart_btn.setAction_("restartForAccessibility:")
-        parent.addSubview_(self._ax_restart_btn)
-
-        self.rec_button.setHidden_(True)
-
-    @objc.python_method
-    def _hide_ax_buttons(self):
-        """Hide the accessibility fix buttons and restore the record button."""
-        for attr in ('_ax_fix_btn', '_ax_restart_btn'):
-            btn = getattr(self, attr, None)
-            if btn is not None:
-                btn.setHidden_(True)
-        self.rec_button.setHidden_(False)
-
-    def openAccessibilitySettings_(self, sender):
-        import subprocess as sp
-        sp.Popen(["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
-
-    def restartForAccessibility_(self, sender):
-        self._restart_app()
-
-    @objc.python_method
-    def _start_ax_poll(self):
-        """Poll Accessibility permission every 2s until granted."""
-        if self._ax_timer is not None:
-            return
-        self._ax_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-            2.0, self, "_axPollTick:", None, True)
-        logger.info("Started Accessibility permission polling.")
-
-    def _axPollTick_(self, timer):
-        trusted = ApplicationServices.AXIsProcessTrustedWithOptions(
-            {ApplicationServices.kAXTrustedCheckOptionPrompt: False}
-        )
-        if trusted:
-            logger.info("Accessibility permission granted — starting hotkey listeners.")
-            self._has_accessibility = True
-            self._ax_timer.invalidate()
-            self._ax_timer = None
-            self._hide_ax_buttons()
-            # Start the listeners now that we have permission
-            if not self.hotkey_listener.is_listening:
-                self.hotkey_listener.start()
-            if not self.context_listener.is_listening:
-                self.context_listener.start()
-            # Restore status
-            if self.config.openai_api_key:
-                self.status_label.setStringValue_("Ready")
-                self.status_label.setTextColor_(_ACCENT())
-                self._status_dot.layer().setBackgroundColor_(_ACCENT().CGColor())
-            else:
-                self._check_api_key()
 
     @objc.python_method
     def _check_api_key(self):
