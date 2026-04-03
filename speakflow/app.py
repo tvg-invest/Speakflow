@@ -1261,6 +1261,7 @@ TIPS
 
         # Auto-detect context: try to grab selection from the active app
         self._selected_text = ""
+        self._surrounding_text = ""
         self._context_mode = False
         if not self._float_triggered:
             sel = self._run_on_main_sync(self._grab_selection)
@@ -1269,6 +1270,9 @@ TIPS
                 self._context_mode = True
                 logger.info("Context mode: grabbed %d chars from %s.",
                             len(sel), self._active_app)
+            if self.config.context_cleanup:
+                self._surrounding_text = self._run_on_main_sync(
+                    self._grab_surrounding_text) or ""
 
         # Re-check: deactivate may have raced us during _grab_selection
         if not self._recording:
@@ -1374,6 +1378,28 @@ TIPS
             return ""
 
     @objc.python_method
+    def _grab_surrounding_text(self):
+        """Return the full text content of the focused text field via AXValue.
+
+        Used to give the cleanup model context about names, terms, and writing
+        style already present in the field.  Returns '' on failure.
+        """
+        try:
+            system_wide = ApplicationServices.AXUIElementCreateSystemWide()
+            err, focused = ApplicationServices.AXUIElementCopyAttributeValue(
+                system_wide, "AXFocusedUIElement", None)
+            if err != 0 or focused is None:
+                return ""
+            err, value = ApplicationServices.AXUIElementCopyAttributeValue(
+                focused, "AXValue", None)
+            if err != 0 or not value:
+                return ""
+            return str(value)
+        except Exception:
+            logger.debug("AXValue failed", exc_info=True)
+            return ""
+
+    @objc.python_method
     def _set_clipboard(self, text):
         """Put text on the clipboard."""
         pb = NSPasteboard.generalPasteboard()
@@ -1424,6 +1450,7 @@ TIPS
                 voice_instruction=voice_text,
                 model=self.config.context_model,
                 app_context=app_ctx,
+                surrounding_text=self._surrounding_text,
             )
             if not response or not response.strip():
                 self._run_on_main(lambda: self._ui_error("No response generated."))
@@ -1475,7 +1502,10 @@ TIPS
     def _transcribe_and_insert(self, audio_data):
         try:
             app_ctx = self._active_app if self.config.context_cleanup else ""
-            text = self.transcriber.transcribe(audio_data, app_context=app_ctx)
+            text = self.transcriber.transcribe(
+                audio_data, app_context=app_ctx,
+                surrounding_text=self._surrounding_text,
+            )
             if not text or not text.strip():
                 self._run_on_main(lambda: self._ui_error("No speech detected."))
                 return

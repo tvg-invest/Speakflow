@@ -32,7 +32,7 @@ class Transcriber:
     # Public API
     # ------------------------------------------------------------------
 
-    def transcribe(self, audio_data: bytes, app_context: str = "") -> str:
+    def transcribe(self, audio_data: bytes, app_context: str = "", surrounding_text: str = "") -> str:
         """Transcribe WAV audio bytes into text.
 
         Args:
@@ -87,11 +87,11 @@ class Transcriber:
         raw_text = raw_text.strip().lstrip("-–—").strip()
 
         if self.ai_cleanup and raw_text:
-            return self.cleanup_text(raw_text, self.language, app_context)
+            return self.cleanup_text(raw_text, self.language, app_context, surrounding_text)
 
         return raw_text
 
-    def cleanup_text(self, raw_text: str, language: str, app_context: str = "") -> str:
+    def cleanup_text(self, raw_text: str, language: str, app_context: str = "", surrounding_text: str = "") -> str:
         """Use a GPT model to clean up a raw speech transcription.
 
         Args:
@@ -102,20 +102,63 @@ class Transcriber:
         Returns:
             The cleaned-up text.
         """
-        # Context-aware tone hint
-        context_hint = ""
+        # Context-aware formatting rules
+        context_rules = ""
         if app_context:
             al = app_context.lower()
             if any(x in al for x in ("mail", "outlook", "gmail", "spark")):
-                context_hint = " The user is writing an email — use a professional, clear tone."
+                context_rules = (
+                    "\n\nFORMATTING RULES (user is writing an email):\n"
+                    "- Use complete sentences with proper punctuation.\n"
+                    "- Use a professional, clear tone.\n"
+                    "- Do NOT add greetings or signatures unless the user dictated them.\n"
+                    "- Avoid abbreviations — write words out in full.\n"
+                    "- Capitalize properly (names, sentence starts)."
+                )
             elif any(x in al for x in ("messages", "imessage", "messenger", "telegram",
                                         "whatsapp", "slack", "discord", "teams")):
-                context_hint = " The user is writing a chat message — keep it casual and natural."
+                context_rules = (
+                    "\n\nFORMATTING RULES (user is writing a chat message):\n"
+                    "- Keep it casual and natural.\n"
+                    "- Use sentence case (capitalize first word only).\n"
+                    "- Abbreviations are fine if the user used them.\n"
+                    "- Do NOT add a period at the end if it is a single sentence.\n"
+                    "- Use periods to separate multiple sentences."
+                )
             elif any(x in al for x in ("code", "xcode", "terminal", "intellij",
                                         "pycharm", "cursor", "sublime", "vim", "neovim")):
-                context_hint = " The user is in a code editor — if it sounds like a comment, format it as a concise code comment."
+                context_rules = (
+                    "\n\nFORMATTING RULES (user is in a code editor):\n"
+                    "- Preserve technical terms, function names, and variable names exactly.\n"
+                    "- If it sounds like a code comment, format as: // <comment text>\n"
+                    "- If it sounds like a commit message, use imperative mood and keep it short.\n"
+                    "- Do NOT alter code-like tokens (e.g. camelCase, snake_case)."
+                )
             elif any(x in al for x in ("notes", "notion", "obsidian", "bear", "craft")):
-                context_hint = " The user is writing notes — keep it concise and well-structured."
+                context_rules = (
+                    "\n\nFORMATTING RULES (user is writing notes):\n"
+                    "- Use complete sentences with proper punctuation.\n"
+                    "- If the user dictates a list, format items with '- ' prefix.\n"
+                    "- Keep it concise and well-structured."
+                )
+            elif any(x in al for x in ("safari", "chrome", "firefox", "arc", "brave", "edge")):
+                context_rules = (
+                    "\n\nFORMATTING RULES (user is in a browser):\n"
+                    "- Use a neutral, clear tone.\n"
+                    "- Use complete sentences with proper punctuation."
+                )
+
+        # Surrounding-text context for spelling/style consistency
+        surrounding_hint = ""
+        if surrounding_text:
+            # Last ~500 chars for context, never repeat them
+            snippet = surrounding_text[-500:]
+            surrounding_hint = (
+                "\n\nCONTEXT — the text below is already in the text field. Use it "
+                "ONLY as reference for spelling of names, terms, and matching style. "
+                "Do NOT repeat or include any of this text in your output:\n"
+                f"---\n{snippet}\n---"
+            )
 
         system_prompt = (
             "You are a text cleanup assistant. Clean up the following speech "
@@ -123,7 +166,7 @@ class Transcriber:
             "'uh', '\u00f8h', 'alts\u00e5'), fix obvious speech-to-text errors, but "
             "preserve the original meaning and language. Keep the same language "
             "as the input. Output ONLY the cleaned text, nothing else."
-            + context_hint
+            + context_rules + surrounding_hint
         )
 
         try:
@@ -168,6 +211,7 @@ class Transcriber:
         voice_instruction: str,
         model: str = "gpt-4o",
         app_context: str = "",
+        surrounding_text: str = "",
     ) -> str:
         """Use GPT to respond based on selected text and a voice instruction.
 
@@ -184,13 +228,21 @@ class Transcriber:
         if app_context:
             context_hint = f"\nThe user is currently in: {app_context}"
 
+        surrounding_hint = ""
+        if surrounding_text:
+            snippet = surrounding_text[-500:]
+            surrounding_hint = (
+                "\n\nSurrounding text in the text field (for context only, "
+                "do NOT repeat it):\n---\n" + snippet + "\n---"
+            )
+
         system_prompt = (
             "You are a helpful assistant. The user has selected some text on "
             "their screen and is giving you a voice instruction about it. "
             "Follow the instruction precisely. If asked to draft a reply, "
             "write ONLY the reply — no explanations, no labels, no quotes "
             "around it. Match the language of the user's voice instruction."
-            + context_hint
+            + context_hint + surrounding_hint
         )
 
         user_msg = (
