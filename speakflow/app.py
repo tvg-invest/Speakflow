@@ -177,11 +177,7 @@ class SpeakFlowUI(NSObject):
         self._build_window()
         self._build_floating_indicator()
         self._check_api_key()
-        self._check_permissions()
 
-        # Always start listeners — AXIsProcessTrustedWithOptions may
-        # return False even when Accessibility is actually granted
-        # (embedded Python binary vs .app bundle identity mismatch).
         self.hotkey_listener.start()
         self.context_listener.start()
 
@@ -191,24 +187,10 @@ class SpeakFlowUI(NSObject):
         # Show first-time onboarding guide
         if self.config.get("first_run", True):
             self.config.set("first_run", False)
-            # Delay slightly so the main window is visible first
             NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
                 0.5, self, "showGuide:", None, False)
 
         logger.info("SpeakFlowApp initialised.")
-
-    @objc.python_method
-    def _check_permissions(self):
-        # Check microphone permission
-        AVCaptureDevice = objc.lookUpClass('AVCaptureDevice')
-        mic_status = AVCaptureDevice.authorizationStatusForMediaType_('soun')
-        if mic_status == 0:
-            logger.info("Requesting microphone permission.")
-            AVCaptureDevice.requestAccessForMediaType_completionHandler_('soun', lambda granted: None)
-        elif mic_status == 2:
-            logger.warning("Microphone access denied.")
-            self.status_label.setStringValue_("Grant Microphone access in System Settings")
-            self.status_label.setTextColor_(_ORANGE())
 
     @objc.python_method
     def _check_api_key(self):
