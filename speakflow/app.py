@@ -178,16 +178,15 @@ class SpeakFlowUI(NSObject):
         self._build_floating_indicator()
         self._check_api_key()
 
-        self.hotkey_listener.start()
-        self.context_listener.start()
-
         self.window.makeKeyAndOrderFront_(None)
         NSApp.activateIgnoringOtherApps_(True)
 
-        # Prompt for Accessibility after the run loop starts (deferred so
-        # it doesn't block app launch).  If already trusted this is a no-op.
+        # Defer listener start — pynput needs Accessibility, which may not
+        # be granted yet.  The timer fires after the run loop starts so the
+        # system dialog can actually appear.
+        self._ax_poll_timer = None
         NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-            1.0, self, "_checkAccessibility:", None, False)
+            0.5, self, "_checkAccessibility:", None, False)
 
         # Show first-time onboarding guide
         if self.config.get("first_run", True):
@@ -205,17 +204,48 @@ class SpeakFlowUI(NSObject):
             logger.warning("No OpenAI API key configured.")
 
     def _checkAccessibility_(self, timer):
-        """Deferred Accessibility check — runs after the run loop starts."""
+        """Deferred Accessibility check — starts listeners once trusted."""
         trusted = ApplicationServices.AXIsProcessTrustedWithOptions(
             {ApplicationServices.kAXTrustedCheckOptionPrompt: True}
         )
-        if not trusted:
-            logger.warning("Accessibility not granted — system dialog shown.")
+        if trusted:
+            self._startListeners()
+        else:
+            logger.warning("Accessibility not granted — polling every 2s.")
             self.status_label.setStringValue_(
                 "Grant Accessibility permission to enable hotkeys")
             self.status_label.setTextColor_(_ORANGE())
-        else:
-            logger.info("Accessibility granted.")
+            # Poll until user grants permission in System Settings
+            if self._ax_poll_timer is None:
+                self._ax_poll_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+                    2.0, self, "_axPollTick:", None, True)
+
+    def _axPollTick_(self, timer):
+        """Repeating poll — detects when user grants Accessibility."""
+        trusted = ApplicationServices.AXIsProcessTrustedWithOptions(
+            {ApplicationServices.kAXTrustedCheckOptionPrompt: False}
+        )
+        if trusted:
+            self._startListeners()
+
+    @objc.python_method
+    def _startListeners(self):
+        """Start (or restart) hotkey listeners after Accessibility is granted."""
+        logger.info("Accessibility granted — starting hotkey listeners.")
+        # Stop polling
+        if self._ax_poll_timer is not None:
+            self._ax_poll_timer.invalidate()
+            self._ax_poll_timer = None
+        # (Re)start listeners
+        self.hotkey_listener.stop()
+        self.context_listener.stop()
+        self.hotkey_listener.start()
+        self.context_listener.start()
+        # Update status
+        self.status_label.setStringValue_("Ready — hold hotkey to dictate")
+        self.status_label.setTextColor_(
+            NSColor.colorWithCalibratedRed_green_blue_alpha_(0.6, 0.6, 0.6, 1.0))
+        self._check_api_key()
 
     @objc.python_method
     def show_window(self):
