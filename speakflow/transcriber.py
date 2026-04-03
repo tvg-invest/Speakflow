@@ -83,7 +83,10 @@ class Transcriber:
             logger.error("OpenAI API error during transcription: %s", exc)
             raise RuntimeError(f"Transcription failed: {exc}") from exc
 
-        if self.ai_cleanup and raw_text.strip():
+        # Whisper often prepends dashes when it hears a brief pause or noise
+        raw_text = raw_text.strip().lstrip("-–—").strip()
+
+        if self.ai_cleanup and raw_text:
             return self.cleanup_text(raw_text, self.language, app_context)
 
         return raw_text
