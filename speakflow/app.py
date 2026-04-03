@@ -203,14 +203,9 @@ class SpeakFlowUI(NSObject):
 
     @objc.python_method
     def _check_permissions(self):
-        # Trigger system prompt on first launch (helps register the app).
-        # On subsequent checks, only check silently.
-        prompt = not self.config.get("ax_prompted", False)
         trusted = ApplicationServices.AXIsProcessTrustedWithOptions(
-            {ApplicationServices.kAXTrustedCheckOptionPrompt: prompt}
+            {ApplicationServices.kAXTrustedCheckOptionPrompt: False}
         )
-        if prompt:
-            self.config.set("ax_prompted", True)
         self._has_accessibility = trusted
         if not trusted:
             logger.warning("Accessibility not granted.")
@@ -287,10 +282,6 @@ class SpeakFlowUI(NSObject):
         self.rec_button.setHidden_(False)
 
     def openAccessibilitySettings_(self, sender):
-        # Also trigger the system prompt so macOS registers the app
-        ApplicationServices.AXIsProcessTrustedWithOptions(
-            {ApplicationServices.kAXTrustedCheckOptionPrompt: True}
-        )
         import subprocess as sp
         sp.Popen(["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
 
@@ -1407,6 +1398,26 @@ KEYBOARD SHORTCUTS
                 [venv_pip, "install", "--quiet", "-r", str(install_dir / "requirements.txt")],
                 capture_output=True, timeout=60,
             )
+
+            # Rebuild launcher, re-embed Python, re-sign bundle
+            if _APP_PATH.exists():
+                launcher_c = install_dir / "launcher.c"
+                if launcher_c.exists():
+                    app_bin = _APP_PATH / "Contents" / "MacOS"
+                    subprocess.run(
+                        ["cc", "-o", str(app_bin / "SpeakFlow"), str(launcher_c)],
+                        capture_output=True, timeout=30,
+                    )
+                    import sys as _sys
+                    real_py = _sys.executable
+                    if real_py:
+                        import shutil
+                        shutil.copy2(real_py, str(app_bin / "python3"))
+                    subprocess.run(
+                        ["codesign", "--force", "--deep", "--sign", "-", str(_APP_PATH)],
+                        capture_output=True, timeout=30,
+                    )
+                    logger.info("Rebuilt and re-signed .app bundle.")
 
             logger.info("Update completed — restarting.")
             self._run_on_main(self._restart_app)

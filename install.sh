@@ -74,6 +74,21 @@ mkdir -p "$APP_DIR/Contents/Resources"
 
 cc -o "$APP_DIR/Contents/MacOS/SpeakFlow" launcher.c
 
+# Embed a copy of the Python binary so Accessibility trust persists.
+# macOS ties trust to the binary's code signature — using an external
+# Python (e.g. Xcode's or Homebrew's) causes trust to be revoked on
+# every restart.
+VENV_PYTHON="$INSTALL_DIR/venv/bin/python3"
+REAL_PYTHON="$(python3 -c "import sys; print(sys.executable)")"
+if [ -f "$REAL_PYTHON" ]; then
+    cp "$REAL_PYTHON" "$APP_DIR/Contents/MacOS/python3"
+    chmod +x "$APP_DIR/Contents/MacOS/python3"
+    echo "  Embedded Python binary into .app bundle."
+fi
+
+# Ad-hoc code sign so macOS Accessibility trust persists across restarts.
+codesign --force --deep --sign - "$APP_DIR" 2>/dev/null || true
+
 cat > "$APP_DIR/Contents/Info.plist" << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
