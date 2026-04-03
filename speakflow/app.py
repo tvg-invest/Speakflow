@@ -184,6 +184,11 @@ class SpeakFlowUI(NSObject):
         self.window.makeKeyAndOrderFront_(None)
         NSApp.activateIgnoringOtherApps_(True)
 
+        # Prompt for Accessibility after the run loop starts (deferred so
+        # it doesn't block app launch).  If already trusted this is a no-op.
+        NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            1.0, self, "_checkAccessibility:", None, False)
+
         # Show first-time onboarding guide
         if self.config.get("first_run", True):
             self.config.set("first_run", False)
@@ -198,6 +203,19 @@ class SpeakFlowUI(NSObject):
             self.status_label.setStringValue_("Add your API key below to get started")
             self.status_label.setTextColor_(_ORANGE())
             logger.warning("No OpenAI API key configured.")
+
+    def _checkAccessibility_(self, timer):
+        """Deferred Accessibility check — runs after the run loop starts."""
+        trusted = ApplicationServices.AXIsProcessTrustedWithOptions(
+            {ApplicationServices.kAXTrustedCheckOptionPrompt: True}
+        )
+        if not trusted:
+            logger.warning("Accessibility not granted — system dialog shown.")
+            self.status_label.setStringValue_(
+                "Grant Accessibility permission to enable hotkeys")
+            self.status_label.setTextColor_(_ORANGE())
+        else:
+            logger.info("Accessibility granted.")
 
     @objc.python_method
     def show_window(self):
