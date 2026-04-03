@@ -29,7 +29,6 @@ from AppKit import (
 )
 from Foundation import NSTimer, NSAttributedString
 from PyObjCTools import AppHelper
-from pynput import keyboard as kb
 import ApplicationServices
 
 import openai
@@ -44,19 +43,6 @@ from .transcriber import Transcriber
 
 logger = logging.getLogger(__name__)
 
-_MOD_NAMES = {
-    kb.Key.ctrl: "ctrl", kb.Key.ctrl_l: "ctrl", kb.Key.ctrl_r: "ctrl",
-    kb.Key.shift: "shift", kb.Key.shift_l: "shift", kb.Key.shift_r: "shift",
-    kb.Key.cmd: "cmd", kb.Key.cmd_l: "cmd", kb.Key.cmd_r: "cmd",
-    kb.Key.alt: "alt", kb.Key.alt_l: "alt", kb.Key.alt_r: "alt",
-}
-_SPECIAL_NAMES = {
-    kb.Key.space: "space", kb.Key.enter: "enter", kb.Key.tab: "tab",
-    kb.Key.backspace: "backspace", kb.Key.delete: "delete", kb.Key.esc: "escape",
-    kb.Key.f1: "f1", kb.Key.f2: "f2", kb.Key.f3: "f3", kb.Key.f4: "f4",
-    kb.Key.f5: "f5", kb.Key.f6: "f6", kb.Key.f7: "f7", kb.Key.f8: "f8",
-    kb.Key.f9: "f9", kb.Key.f10: "f10", kb.Key.f11: "f11", kb.Key.f12: "f12",
-}
 LANG_OPTIONS = ["Danish", "English", "Auto-detect"]
 LANG_CODES = {"Danish": "da", "English": "en", "Auto-detect": "auto"}
 
@@ -181,9 +167,9 @@ class SpeakFlowUI(NSObject):
         self.window.makeKeyAndOrderFront_(None)
         NSApp.activateIgnoringOtherApps_(True)
 
-        # Defer listener start — pynput needs Accessibility, which may not
-        # be granted yet.  The timer fires after the run loop starts so the
-        # system dialog can actually appear.
+        # Defer listener start — NSEvent global monitors need Accessibility,
+        # which may not be granted yet.  The timer fires after the run loop
+        # starts so the system dialog can actually appear.
         self._ax_poll_timer = None
         NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
             0.5, self, "_checkAccessibility:", None, False)
