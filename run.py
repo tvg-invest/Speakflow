@@ -19,6 +19,7 @@ def main():
     os.makedirs(os.path.expanduser('~/.speakflow'), exist_ok=True)
 
     logging.basicConfig(
+        force=True,
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
@@ -26,6 +27,8 @@ def main():
             logging.StreamHandler()
         ]
     )
+
+    logging.info("Python executable: %s", sys.executable)
 
     # Check Python version
     if sys.version_info < (3, 9):

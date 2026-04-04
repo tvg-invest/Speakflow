@@ -7,7 +7,7 @@ import subprocess
 import threading
 import time
 
-from pynput.keyboard import Controller, Key
+import Quartz
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,29 @@ def _write_clipboard(text: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Quartz keyboard simulation
+# ---------------------------------------------------------------------------
+
+_kVK_V = 0x09  # macOS virtual keycode for "v"
+_kCGEventFlagMaskCommand = 1 << 20
+
+
+def _simulate_cmd_v() -> None:
+    """Simulate Cmd+V using Quartz CGEventPost."""
+    src = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStateHIDSystemState)
+
+    cmd_v_down = Quartz.CGEventCreateKeyboardEvent(src, _kVK_V, True)
+    Quartz.CGEventSetFlags(cmd_v_down, _kCGEventFlagMaskCommand)
+    Quartz.CGEventPost(Quartz.kCGHIDEventTap, cmd_v_down)
+
+    time.sleep(0.01)
+
+    cmd_v_up = Quartz.CGEventCreateKeyboardEvent(src, _kVK_V, False)
+    Quartz.CGEventSetFlags(cmd_v_up, _kCGEventFlagMaskCommand)
+    Quartz.CGEventPost(Quartz.kCGHIDEventTap, cmd_v_up)
+
+
+# ---------------------------------------------------------------------------
 # TextInserter
 # ---------------------------------------------------------------------------
 
@@ -53,16 +76,9 @@ class TextInserter:
 
     * **clipboard** (default) -- copies the text to the system clipboard,
       simulates *Cmd+V* to paste it, then restores the previous clipboard
-      contents.  Fast and fully Unicode-safe (Danish ``ae``, ``oe``, ``aa``
-      included).
+      contents.  Fast and fully Unicode-safe.
     * **keyboard** -- types the text character-by-character via
-      ``pynput.keyboard.Controller``.  Slower but does not touch the
-      clipboard.
-
-    Parameters
-    ----------
-    method:
-        ``"clipboard"`` or ``"keyboard"``.
+      Quartz CGEvent.  Slower but does not touch the clipboard.
     """
 
     VALID_METHODS = ("clipboard", "keyboard")
@@ -74,7 +90,6 @@ class TextInserter:
                 f"Must be one of {self.VALID_METHODS}."
             )
         self._method = method
-        self._keyboard = Controller()
         self._lock = threading.Lock()
         logger.debug("TextInserter initialised (method=%s)", method)
 
@@ -96,10 +111,7 @@ class TextInserter:
         logger.info("Text insertion method changed to %s", value)
 
     def insert_text(self, text: str) -> None:
-        """Insert *text* at the current cursor position.
-
-        The concrete strategy is determined by :pyattr:`method`.
-        """
+        """Insert *text* at the current cursor position."""
         if not text:
             logger.debug("insert_text called with empty string -- nothing to do")
             return
@@ -113,52 +125,38 @@ class TextInserter:
     # -- private strategies -------------------------------------------------
 
     def _insert_via_clipboard(self, text: str) -> None:
-        """Copy *text* to the clipboard, paste with Cmd+V, then restore.
-
-        This is the preferred approach: it is fast and handles arbitrary
-        Unicode (including Danish characters such as ae, oe, aa) without
-        issues.
-        """
+        """Copy *text* to the clipboard, paste with Cmd+V, then restore."""
         original = _read_clipboard()
         try:
             _write_clipboard(text)
-
-            # Small pause so the pasteboard is ready before we fire the
-            # keystroke.
             time.sleep(0.05)
 
-            # Simulate Cmd+V
-            self._keyboard.press(Key.cmd)
-            self._keyboard.press("v")
-            self._keyboard.release("v")
-            self._keyboard.release(Key.cmd)
+            logger.info("Firing Cmd+V paste (%d chars)", len(text))
+            _simulate_cmd_v()
 
-            # Give the target application a moment to process the paste.
-            time.sleep(0.1)
-            logger.debug("Pasted %d characters via clipboard", len(text))
+            time.sleep(0.15)
+            logger.info("Paste completed")
         finally:
-            # Always restore the user's original clipboard contents.
             _write_clipboard(original)
 
     def _insert_via_keyboard(self, text: str) -> None:
-        """Type *text* character-by-character using pynput.
-
-        A small delay is inserted between keystrokes so that receiving
-        applications do not drop characters.  Newlines are handled by
-        pressing the *Return* key.
-        """
-        delay = 0.02  # seconds between keystrokes
+        """Type *text* character-by-character using Quartz CGEvent."""
+        src = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStateHIDSystemState)
+        delay = 0.02
 
         for char in text:
             if char == "\n":
-                self._keyboard.press(Key.enter)
-                self._keyboard.release(Key.enter)
+                ev_down = Quartz.CGEventCreateKeyboardEvent(src, 36, True)
+                ev_up = Quartz.CGEventCreateKeyboardEvent(src, 36, False)
             elif char == "\t":
-                self._keyboard.press(Key.tab)
-                self._keyboard.release(Key.tab)
+                ev_down = Quartz.CGEventCreateKeyboardEvent(src, 48, True)
+                ev_up = Quartz.CGEventCreateKeyboardEvent(src, 48, False)
             else:
-                self._keyboard.type(char)
-
+                ev_down = Quartz.CGEventCreateKeyboardEvent(src, 0, True)
+                Quartz.CGEventKeyboardSetUnicodeString(ev_down, len(char), char)
+                ev_up = Quartz.CGEventCreateKeyboardEvent(src, 0, False)
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev_down)
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev_up)
             time.sleep(delay)
 
         logger.debug("Typed %d characters via keyboard", len(text))

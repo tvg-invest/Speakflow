@@ -1630,7 +1630,9 @@ TIPS
                 # Hotkey — insert text at cursor in the active app.
                 # Re-activate the original app in case focus shifted during
                 # transcription (the user may have clicked elsewhere).
-                if self._reactivate_target_app():
+                reactivated = self._reactivate_target_app()
+                logger.info("Reactivate %s: %s", self._active_app, reactivated)
+                if reactivated:
                     _time.sleep(0.1)  # Let target app settle before paste
                     self.text_inserter.insert_text(text)
                     self._run_on_main(lambda: self._ui_done(text))
