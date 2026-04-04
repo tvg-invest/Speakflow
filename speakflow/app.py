@@ -1554,7 +1554,7 @@ TIPS
                 return
             logger.info("Context instruction: %s", voice_text[:100])
 
-            app_ctx = self._active_app if self.config.context_cleanup else ""
+            app_ctx = (self._active_app or "") if self.config.context_cleanup else ""
             response = self.transcriber.context_query(
                 selected_text=self._selected_text,
                 voice_instruction=voice_text,
@@ -1580,6 +1580,7 @@ TIPS
         finally:
             self._processing = False
             self._context_mode = False
+            self._float_triggered = False
 
     # ── Regular recording ──────────────────────────────────────
 
@@ -1611,7 +1612,7 @@ TIPS
     @objc.python_method
     def _transcribe_and_insert(self, audio_data):
         try:
-            app_ctx = self._active_app if self.config.context_cleanup else ""
+            app_ctx = (self._active_app or "") if self.config.context_cleanup else ""
             text = self.transcriber.transcribe(
                 audio_data, app_context=app_ctx,
                 before_text=self._before_text, after_text=self._after_text,
@@ -1620,9 +1621,6 @@ TIPS
                 self._run_on_main(lambda: self._ui_error("No speech detected."))
                 return
             logger.info("Transcription: %d chars.", len(text))
-
-            # Save to history
-            history.add(text, app_name=self._active_app, language=self.config.language)
 
             if self._float_triggered:
                 # Float button has no cursor target — copy to clipboard instead
@@ -1633,6 +1631,7 @@ TIPS
                 # Re-activate the original app in case focus shifted during
                 # transcription (the user may have clicked elsewhere).
                 if self._reactivate_target_app():
+                    _time.sleep(0.1)  # Let target app settle before paste
                     self.text_inserter.insert_text(text)
                     self._run_on_main(lambda: self._ui_done(text))
                 else:
@@ -1642,6 +1641,12 @@ TIPS
         except Exception:
             logger.error("Transcribe failed:\n%s", traceback.format_exc())
             self._run_on_main(lambda: self._ui_error("Transcription failed."))
+        else:
+            # Save to history only after successful insertion/clipboard copy
+            try:
+                history.add(text, app_name=self._active_app, language=self.config.language)
+            except Exception:
+                logger.warning("Failed to save history: %s", traceback.format_exc().splitlines()[-1])
         finally:
             self._processing = False
             self._float_triggered = False

@@ -5,13 +5,13 @@ and WAV output optimised for Whisper (16 kHz, mono, 16-bit PCM).
 """
 from __future__ import annotations
 
-from __future__ import annotations
-
 import io
-import struct
+import logging
 import threading
 import time
 import wave
+
+logger = logging.getLogger(__name__)
 
 import numpy as np
 import sounddevice as sd
@@ -326,8 +326,8 @@ class AudioRecorder:
                     try:
                         self.on_silence_detected()
                     except Exception:
-                        # Never let a callback crash the recording thread.
-                        pass
+                        logger.warning(
+                            "on_silence_detected callback error", exc_info=True)
         else:
             # Sound detected -- reset the silence timer.
             self._silence_start = None

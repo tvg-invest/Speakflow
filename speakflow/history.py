@@ -43,6 +43,9 @@ def add(text: str, app_name: str = "", language: str = "") -> dict[str, Any]:
 
 
 def _save(entries: list[dict[str, Any]]) -> None:
-    HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(entries, f, indent=2, ensure_ascii=False)
+    try:
+        HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(entries, f, indent=2, ensure_ascii=False)
+    except OSError:
+        logger.warning("Could not save history to %s", HISTORY_FILE, exc_info=True)

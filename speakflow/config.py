@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 CONFIG_DIR = Path.home() / ".speakflow"
 CONFIG_FILE = CONFIG_DIR / "config.json"
@@ -58,9 +61,12 @@ class Config:
             self.save()
 
     def save(self) -> None:
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(self._data, f, indent=2, ensure_ascii=False)
+        try:
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                json.dump(self._data, f, indent=2, ensure_ascii=False)
+        except OSError:
+            logger.warning("Could not save config to %s", CONFIG_FILE, exc_info=True)
 
     def get(self, key: str, default: Any = None) -> Any:
         return self._data.get(key, default)
