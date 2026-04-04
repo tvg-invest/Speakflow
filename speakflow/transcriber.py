@@ -1,5 +1,7 @@
 """Speech-to-text transcription module using the OpenAI Whisper API."""
 
+from __future__ import annotations
+
 import io
 import logging
 
