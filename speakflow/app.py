@@ -124,6 +124,7 @@ class SpeakFlowUI(NSObject):
         self._before_text = ""
         self._after_text = ""
         self._active_app = ""
+        self._target_running_app = None
         self._stop_lock = threading.Lock()
         self._dispatcher = MainThreadDispatcher.alloc().init()
         self._history_win = None
@@ -330,6 +331,38 @@ class SpeakFlowUI(NSObject):
             return app.localizedName() if app else ""
         except Exception:
             return ""
+
+    @objc.python_method
+    def _get_active_running_app(self):
+        """Return the NSRunningApplication for the frontmost app."""
+        try:
+            return NSWorkspace.sharedWorkspace().frontmostApplication()
+        except Exception:
+            return None
+
+    @objc.python_method
+    def _reactivate_target_app(self):
+        """Re-activate the app that was frontmost when recording started.
+
+        Returns True if the target app is (or becomes) frontmost.
+        """
+        target = self._target_running_app
+        if target is None:
+            return False
+        # Already frontmost?
+        front = NSWorkspace.sharedWorkspace().frontmostApplication()
+        if front and front.processIdentifier() == target.processIdentifier():
+            return True
+        # Activate it
+        target.activateWithOptions_(1 << 1)  # NSApplicationActivateIgnoringOtherApps
+        # Wait briefly for it to become frontmost (up to 500ms)
+        for _ in range(10):
+            _time.sleep(0.05)
+            front = NSWorkspace.sharedWorkspace().frontmostApplication()
+            if front and front.processIdentifier() == target.processIdentifier():
+                return True
+        logger.warning("Could not reactivate %s before paste", self._active_app)
+        return False
 
     # ── Status bar ──────────────────────────────────────────────
 
@@ -1311,6 +1344,7 @@ TIPS
                 return
             self._recording = True
         self._active_app = self._run_on_main_sync(self._get_active_app)
+        self._target_running_app = self._run_on_main_sync(self._get_active_running_app)
 
         # Auto-detect context: try to grab selection from the active app
         self._selected_text = ""
@@ -1591,7 +1625,10 @@ TIPS
                 self._run_on_main_sync(lambda: self._set_clipboard(text))
                 self._run_on_main(lambda: self._ui_done_clipboard(text))
             else:
-                # Hotkey — insert text at cursor in the active app
+                # Hotkey — insert text at cursor in the active app.
+                # Re-activate the original app in case focus shifted during
+                # transcription (the user may have clicked elsewhere).
+                self._run_on_main_sync(lambda: self._reactivate_target_app())
                 self.text_inserter.insert_text(text)
                 self._run_on_main(lambda: self._ui_done(text))
         except Exception:
