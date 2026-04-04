@@ -870,17 +870,24 @@ SETTINGS
 
   • Hotkey — change the keyboard shortcut
   • Language — set your dictation language or use auto-detect
-  • AI Cleanup — automatically fixes grammar, filler words, and formatting
-  • Smart Context — enables AI-powered context understanding
+  • Cleanup Level — controls how much AI cleans up your speech:
+      Off = raw transcription, Light = punctuation and filler words only,
+      Medium = full cleanup with grammar and clarity fixes
+  • Smart Context — reads text around your cursor for better results:
+      names, terms, and writing style are matched automatically
+  • My Words — add names, terms, or jargon (comma-separated) that
+      should always be spelled correctly in transcriptions
   • Sound Feedback — plays a sound when recording starts/stops
   • Start at Login — launch SpeakFlow automatically
 
 
 TIPS
 
-  • Recording stops automatically after a silence pause (configurable)
+  • Recording stops automatically after a silence pause
   • Maximum recording length is 2 hours
   • Check "View History" to see and copy previous transcriptions
+  • Add your name, company, and common terms to "My Words" for
+    much better transcription accuracy
   • After an update, you may need to re-enable Accessibility permissions
     in System Settings → Privacy & Security → Accessibility
 """
