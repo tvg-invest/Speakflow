@@ -43,18 +43,16 @@ class Config:
                     self._data = json.load(f)
             except (json.JSONDecodeError, OSError):
                 self._data = {}
+            # Detect if this is an old config without editing_strength
+            had_editing_strength = "editing_strength" in self._data
             merged = {**DEFAULTS, **self._data}
             if merged != self._data:
                 self._data = merged
                 self.save()
-            # Migrate old ai_cleanup boolean → editing_strength
-            if "editing_strength" not in self._data or (
-                "ai_cleanup" in self._data and not self._data["ai_cleanup"]
-                and self._data.get("editing_strength") == "medium"
-            ):
-                if not self._data.get("ai_cleanup", True):
-                    self._data["editing_strength"] = "off"
-                    self.save()
+            # Migrate old ai_cleanup=false → editing_strength="off"
+            if not had_editing_strength and not self._data.get("ai_cleanup", True):
+                self._data["editing_strength"] = "off"
+                self.save()
         else:
             self._data = dict(DEFAULTS)
             self.save()

@@ -121,6 +121,8 @@ class SpeakFlowUI(NSObject):
         self._context_mode = False
         self._float_triggered = False
         self._selected_text = ""
+        self._before_text = ""
+        self._after_text = ""
         self._active_app = ""
         self._stop_lock = threading.Lock()
         self._dispatcher = MainThreadDispatcher.alloc().init()
@@ -142,7 +144,6 @@ class SpeakFlowUI(NSObject):
             model=self.config.model,
             language=self.config.language,
             auto_detect=self.config.auto_language_detect,
-            ai_cleanup=self.config.ai_cleanup,
             cleanup_model=self.config.ai_cleanup_model,
             editing_strength=self.config.editing_strength,
             personal_dictionary=self.config.personal_dictionary,
@@ -402,9 +403,9 @@ class SpeakFlowUI(NSObject):
         self.rec_button.setAction_("toggleRecording:")
         y -= card_h + 16
 
-        # ── Settings card (11 rows) ──
+        # ── Settings card (10 rows) ──
         row_h = 34
-        num_rows = 11
+        num_rows = 10
         set_h = 44 + num_rows * row_h + 10
         stc = self._card(v, pad, y - set_h, cw, set_h)
 

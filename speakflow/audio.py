@@ -3,6 +3,7 @@
 Captures microphone audio using sounddevice, with silence detection
 and WAV output optimised for Whisper (16 kHz, mono, 16-bit PCM).
 """
+from __future__ import annotations
 
 from __future__ import annotations
 

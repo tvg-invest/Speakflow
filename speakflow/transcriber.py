@@ -20,7 +20,6 @@ class Transcriber:
         model: str = "whisper-1",
         language: str = "da",
         auto_detect: bool = True,
-        ai_cleanup: bool = True,
         cleanup_model: str = "gpt-4o-mini",
         editing_strength: str = "medium",
         personal_dictionary: list | None = None,
@@ -29,7 +28,6 @@ class Transcriber:
         self.model = model
         self.language = language
         self.auto_detect = auto_detect
-        self.ai_cleanup = ai_cleanup
         self.cleanup_model = cleanup_model
         self.editing_strength = editing_strength
         self.personal_dictionary = personal_dictionary or []
