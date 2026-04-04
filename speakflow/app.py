@@ -345,9 +345,13 @@ class SpeakFlowUI(NSObject):
         """Re-activate the app that was frontmost when recording started.
 
         Returns True if the target app is (or becomes) frontmost.
+        Must NOT be called on the main thread (uses time.sleep).
         """
         target = self._target_running_app
         if target is None:
+            return False
+        if target.isTerminated():
+            logger.warning("Target app %s terminated, cannot reactivate", self._active_app)
             return False
         # Already frontmost?
         front = NSWorkspace.sharedWorkspace().frontmostApplication()
@@ -355,8 +359,8 @@ class SpeakFlowUI(NSObject):
             return True
         # Activate it
         target.activateWithOptions_(1 << 1)  # NSApplicationActivateIgnoringOtherApps
-        # Wait briefly for it to become frontmost (up to 500ms)
-        for _ in range(10):
+        # Wait briefly for it to become frontmost (up to 300ms)
+        for _ in range(6):
             _time.sleep(0.05)
             front = NSWorkspace.sharedWorkspace().frontmostApplication()
             if front and front.processIdentifier() == target.processIdentifier():
@@ -1304,14 +1308,14 @@ TIPS
         install_dir = Path.home() / ".speakflow"
         if _APP_PATH.exists():
             subprocess.Popen(
-                f'sleep 1 && open "{_APP_PATH}"',
-                shell=True, start_new_session=True,
+                ["bash", "-c", "sleep 1 && open \"$1\"", "_", str(_APP_PATH)],
+                start_new_session=True,
             )
         else:
             script = sys.argv[0] if sys.argv else str(install_dir / "run.py")
             subprocess.Popen(
-                f'sleep 1 && "{sys.executable}" "{script}"',
-                shell=True, start_new_session=True,
+                ["bash", "-c", "sleep 1 && \"$1\" \"$2\"", "_", sys.executable, script],
+                start_new_session=True,
             )
         NSApp.terminate_(None)
 
@@ -1628,15 +1632,20 @@ TIPS
                 # Hotkey — insert text at cursor in the active app.
                 # Re-activate the original app in case focus shifted during
                 # transcription (the user may have clicked elsewhere).
-                self._run_on_main_sync(lambda: self._reactivate_target_app())
-                self.text_inserter.insert_text(text)
-                self._run_on_main(lambda: self._ui_done(text))
+                if self._reactivate_target_app():
+                    self.text_inserter.insert_text(text)
+                    self._run_on_main(lambda: self._ui_done(text))
+                else:
+                    # Could not restore focus — copy to clipboard instead
+                    self._run_on_main_sync(lambda: self._set_clipboard(text))
+                    self._run_on_main(lambda: self._ui_done_clipboard(text))
         except Exception:
             logger.error("Transcribe failed:\n%s", traceback.format_exc())
             self._run_on_main(lambda: self._ui_error("Transcription failed."))
         finally:
             self._processing = False
             self._float_triggered = False
+            self._target_running_app = None
 
     # ── UI state updates ────────────────────────────────────────
 

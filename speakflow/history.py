@@ -1,5 +1,7 @@
 """Transcription history — persists recent dictations to disk."""
 
+from __future__ import annotations
+
 import json
 import logging
 import threading

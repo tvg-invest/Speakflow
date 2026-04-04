@@ -224,4 +224,5 @@ class Config:
         self.set("personal_dictionary", value)
 
     def __repr__(self) -> str:
-        return f"Config({self._data!r})"
+        safe = {k: ("***" if k == "openai_api_key" else v) for k, v in self._data.items()}
+        return f"Config({safe!r})"

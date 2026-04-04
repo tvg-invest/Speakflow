@@ -70,7 +70,7 @@ class Transcriber:
                 self.model,
                 self.auto_detect,
             )
-            response = self.client.audio.transcriptions.create(**kwargs)
+            response = self.client.audio.transcriptions.create(**kwargs, timeout=30)
             raw_text: str = response.text
             logger.debug("Raw transcription: %s", raw_text)
         except openai.AuthenticationError:
@@ -214,7 +214,11 @@ class Transcriber:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": raw_text},
                 ],
+                timeout=30,
             )
+            if not response.choices:
+                logger.warning("Cleanup returned empty choices, using raw text")
+                return raw_text
             content = response.choices[0].message.content
             cleaned: str = content.strip() if content else raw_text
             logger.debug("Cleaned transcription: %s", cleaned)
@@ -306,7 +310,11 @@ class Transcriber:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_msg},
                 ],
+                timeout=30,
             )
+            if not response.choices:
+                logger.warning("Context query returned empty choices")
+                return ""
             content = response.choices[0].message.content
             result: str = content.strip() if content else ""
             logger.debug("Context response: %s", result[:200])
