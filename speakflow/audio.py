@@ -77,6 +77,7 @@ class AudioRecorder:
         # Public callbacks -- set by the caller.
         self.on_silence_detected: callable | None = None
         self.on_error: callable | None = None  # Called with (error_msg: str)
+        self.on_max_duration: callable | None = None
 
         # Live audio level (updated every chunk, read by UI for visualisation).
         self.current_rms: float = 0.0
@@ -231,12 +232,14 @@ class AudioRecorder:
         """
         self._recording_start_time = time.monotonic()
 
+        max_duration_reached = False
         try:
             stream = self._open_stream_with_retry()
             with stream:
                 while not self._stop_event.is_set():
                     elapsed = time.monotonic() - self._recording_start_time
                     if elapsed >= self.max_duration:
+                        max_duration_reached = True
                         break
 
                     data, overflowed = stream.read(self._CHUNK_FRAMES)
@@ -268,6 +271,11 @@ class AudioRecorder:
                     pass
         finally:
             self._recording = False
+            if max_duration_reached and self.on_max_duration is not None:
+                try:
+                    self.on_max_duration()
+                except Exception:
+                    logger.warning("on_max_duration callback error", exc_info=True)
 
     def _open_stream_with_retry(self) -> sd.InputStream:
         """Try to open the audio input stream, retrying on transient errors."""

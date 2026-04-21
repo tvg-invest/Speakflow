@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -45,7 +47,13 @@ def add(text: str, app_name: str = "", language: str = "") -> dict[str, Any]:
 def _save(entries: list[dict[str, Any]]) -> None:
     try:
         HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(entries, f, indent=2, ensure_ascii=False)
+        fd, tmp = tempfile.mkstemp(dir=HISTORY_FILE.parent, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(entries, f, indent=2, ensure_ascii=False)
+            os.replace(tmp, HISTORY_FILE)
+        except BaseException:
+            os.unlink(tmp)
+            raise
     except OSError:
         logger.warning("Could not save history to %s", HISTORY_FILE, exc_info=True)

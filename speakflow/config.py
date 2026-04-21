@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -63,8 +65,14 @@ class Config:
     def save(self) -> None:
         try:
             CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-                json.dump(self._data, f, indent=2, ensure_ascii=False)
+            fd, tmp = tempfile.mkstemp(dir=CONFIG_DIR, suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(self._data, f, indent=2, ensure_ascii=False)
+                os.replace(tmp, CONFIG_FILE)
+            except BaseException:
+                os.unlink(tmp)
+                raise
         except OSError:
             logger.warning("Could not save config to %s", CONFIG_FILE, exc_info=True)
 

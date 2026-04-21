@@ -11,18 +11,16 @@ from pathlib import Path
 import subprocess
 import time as _time
 import objc
-import Quartz
 from AppKit import (
     NSApplication, NSApp, NSApplicationActivationPolicyRegular,
     NSWindow, NSPanel, NSBackingStoreBuffered,
     NSMakeRect, NSTextField, NSButton, NSFont,
     NSColor, NSPopUpButton, NSStatusBar, NSVariableStatusItemLength,
     NSMenu, NSMenuItem, NSObject,
-    NSBezelStyleRounded, NSBezierPath,
     NSEvent, NSScreen, NSView,
     NSFloatingWindowLevel, NSVisualEffectView,
     NSFontWeightMedium, NSFontWeightSemibold,
-    NSImage, NSImageView, NSWorkspace,
+    NSWorkspace,
     NSScrollView, NSTextView, NSSlider,
     NSPasteboard,
     NSFontAttributeName, NSForegroundColorAttributeName,
@@ -36,7 +34,7 @@ import openai
 from .audio import AudioRecorder
 from .config import Config
 from . import history
-from .hotkey import HotkeyListener, is_modifier_only
+from .hotkey import HotkeyListener, is_modifier_only, _KEYCODE_MAP
 from .sounds import play_error_sound, play_start_sound, play_stop_sound, set_volume
 from .text_inserter import TextInserter
 from .transcriber import Transcriber
@@ -102,6 +100,19 @@ class AppDelegate(NSObject):
     def applicationShouldTerminateAfterLastWindowClosed_(self, app):
         return False
 
+    def applicationWillTerminate_(self, notification):
+        if hasattr(self, 'sf'):
+            try:
+                self.sf.hotkey_listener.stop()
+            except Exception:
+                pass
+            try:
+                if self.sf._ax_poll_timer is not None:
+                    self.sf._ax_poll_timer.invalidate()
+                    self.sf._ax_poll_timer = None
+            except Exception:
+                pass
+
 
 class SpeakFlowUI(NSObject):
     def init(self):
@@ -130,6 +141,7 @@ class SpeakFlowUI(NSObject):
         self._history_win = None
         self._guide_win = None
         self._key_monitor = None
+        self._vol_save_timer = None
 
         # Core components
         self.audio_recorder = AudioRecorder(
@@ -139,6 +151,7 @@ class SpeakFlowUI(NSObject):
         )
         self.audio_recorder.on_silence_detected = self._on_silence
         self.audio_recorder.on_error = self._on_record_error
+        self.audio_recorder.on_max_duration = self._on_silence
 
         self.transcriber = Transcriber(
             api_key=self.config.openai_api_key,
@@ -461,7 +474,10 @@ class SpeakFlowUI(NSObject):
             NSMakeRect(lx + 80, ry + 5, cw - 130, 24))
         key_val = self.config.openai_api_key
         if key_val:
-            masked = key_val[:3] + "•" * max(0, len(key_val) - 7) + key_val[-4:]
+            if len(key_val) <= 8:
+                masked = key_val[:2] + "•" * (len(key_val) - 2)
+            else:
+                masked = key_val[:3] + "•" * (len(key_val) - 7) + key_val[-4:]
             self.api_key_field.setStringValue_(masked)
         else:
             self.api_key_field.setPlaceholderString_("sk-...")
@@ -948,6 +964,8 @@ TIPS
             self._history_win.setTitle_("Transcription History")
             self._history_win.setBackgroundColor_(_BG())
             self._history_win.setReleasedWhenClosed_(False)
+            self._history_win.setTitlebarAppearsTransparent_(True)
+            self._history_win.setTitleVisibility_(1)
 
         # Build content
         cv = self._history_win.contentView()
@@ -1014,20 +1032,6 @@ TIPS
                                 color=_ACCENT())
             self.hotkey_btn.setEnabled_(False)
 
-            _KEYCODE_MAP = {
-                0: "a", 1: "s", 2: "d", 3: "f", 4: "h", 5: "g", 6: "z",
-                7: "x", 8: "c", 9: "v", 11: "b", 12: "q", 13: "w", 14: "e",
-                15: "r", 16: "y", 17: "t", 18: "1", 19: "2", 20: "3",
-                21: "4", 22: "6", 23: "5", 24: "=", 25: "9", 26: "7",
-                27: "-", 28: "8", 29: "0", 31: "o", 32: "u", 34: "i",
-                35: "p", 37: "l", 38: "j", 40: "k", 45: "n", 46: "m",
-                49: "space", 36: "enter", 48: "tab", 51: "backspace",
-                53: "escape", 123: "left", 124: "right", 125: "down",
-                126: "up",
-                122: "f1", 120: "f2", 99: "f3", 118: "f4", 96: "f5",
-                97: "f6", 98: "f7", 100: "f8", 101: "f9", 109: "f10",
-                103: "f11", 111: "f12",
-            }
             _STANDALONE_KEYS = {
                 "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9",
                 "f10", "f11", "f12", "escape",
@@ -1110,13 +1114,14 @@ TIPS
             display = f"{new_hotkey} (hold)" if is_modifier_only(new_hotkey) else new_hotkey
             self.hotkey_display.setStringValue_(display)
             self.hotkey_display.setTextColor_(_GOLD())
+            logger.info("Hotkey changed to %s.", new_hotkey)
+        except Exception:
+            logger.error("Hotkey apply error:\n%s", traceback.format_exc())
+        finally:
             self._set_btn_title(self.hotkey_btn, "Change",
                                 NSFont.systemFontOfSize_weight_(11, NSFontWeightMedium),
                                 color=_DIM())
             self.hotkey_btn.setEnabled_(True)
-            logger.info("Hotkey changed to %s.", new_hotkey)
-        except Exception:
-            logger.error("Hotkey apply error:\n%s", traceback.format_exc())
 
     def apiKeyChanged_(self, sender):
         raw = sender.stringValue().strip()
@@ -1125,13 +1130,20 @@ TIPS
             return
         self.config.openai_api_key = raw
         self.transcriber.client = openai.OpenAI(api_key=raw)
-        # Mask the displayed key
-        masked = raw[:3] + "•" * max(0, len(raw) - 7) + raw[-4:]
+        if len(raw) <= 8:
+            masked = raw[:2] + "•" * (len(raw) - 2)
+        else:
+            masked = raw[:3] + "•" * (len(raw) - 7) + raw[-4:]
         sender.setStringValue_(masked)
         self.status_label.setStringValue_("API key saved")
         self.status_label.setTextColor_(_GREEN())
         logger.info("API key updated.")
-        threading.Timer(2.0, lambda: self._run_on_main(self._ui_ready)).start()
+
+        def _auto_clear():
+            if not self._recording and not self._processing:
+                self._run_on_main(self._ui_ready)
+
+        threading.Timer(2.0, _auto_clear).start()
 
     def micChanged_(self, sender):
         idx = sender.indexOfSelectedItem()
@@ -1173,8 +1185,12 @@ TIPS
 
     def volumeChanged_(self, sender):
         vol = sender.floatValue()
-        self.config.sound_volume = vol
         set_volume(vol)
+        if self._vol_save_timer is not None:
+            self._vol_save_timer.cancel()
+        self._vol_save_timer = threading.Timer(
+            0.5, lambda: self.config.set("sound_volume", max(0.0, min(1.0, vol))))
+        self._vol_save_timer.start()
 
     def autostartToggled_(self, sender):
         enabled = bool(sender.state())
@@ -1533,6 +1549,7 @@ TIPS
                 logger.debug("Context audio too short, discarding.")
                 self._processing = False
                 self._context_mode = False
+                self._float_triggered = False
                 self._run_on_main(self._ui_ready)
                 return
             threading.Thread(
@@ -1548,7 +1565,7 @@ TIPS
     @objc.python_method
     def _context_transcribe_and_query(self, audio_data):
         try:
-            voice_text = self.transcriber.transcribe(audio_data)
+            voice_text = self.transcriber.transcribe(audio_data, skip_cleanup=True)
             if not voice_text or not voice_text.strip():
                 self._run_on_main(lambda: self._ui_error("No speech detected."))
                 return
@@ -1574,6 +1591,10 @@ TIPS
                 language=self.config.language,
             )
             self._run_on_main(lambda: self._ui_context_done(response))
+        except RuntimeError as exc:
+            logger.error("Context query failed: %s", exc)
+            msg = str(exc)
+            self._run_on_main(lambda: self._ui_error(msg))
         except Exception:
             logger.error("Context query failed:\n%s", traceback.format_exc())
             self._run_on_main(lambda: self._ui_error("Context query failed."))
@@ -1640,6 +1661,10 @@ TIPS
                     # Could not restore focus — copy to clipboard instead
                     self._run_on_main_sync(lambda: self._set_clipboard(text))
                     self._run_on_main(lambda: self._ui_done_clipboard(text))
+        except RuntimeError as exc:
+            logger.error("Transcribe failed: %s", exc)
+            msg = str(exc)
+            self._run_on_main(lambda: self._ui_error(msg))
         except Exception:
             logger.error("Transcribe failed:\n%s", traceback.format_exc())
             self._run_on_main(lambda: self._ui_error("Transcription failed."))
@@ -1673,6 +1698,7 @@ TIPS
         self._status_dot.layer().setBackgroundColor_(_ORANGE().CGColor())
         self._set_btn_title(self.rec_button, "Processing...")
         self.rec_button.layer().setBackgroundColor_(_ORANGE().CGColor())
+        self.rec_button.setEnabled_(False)
         self.status_item.setTitle_("...")
         self._show_float("transcribing", _ORANGE())
 
@@ -1690,7 +1716,12 @@ TIPS
         self._status_dot.layer().setBackgroundColor_(_GREEN().CGColor())
         self._set_btn_title(self.rec_button, "Start Recording")
         self.rec_button.layer().setBackgroundColor_(_GREEN().CGColor())
+        self.rec_button.setEnabled_(True)
         self.status_item.setTitle_("SF")
+        self._float_mode = None
+        if self._level_timer is not None:
+            self._level_timer.invalidate()
+            self._level_timer = None
         self._set_float_color(_GREEN())
         self._last_text_label.setStringValue_(text)
 
@@ -1716,6 +1747,7 @@ TIPS
         self._status_dot.layer().setBackgroundColor_(_PURPLE().CGColor())
         self._set_btn_title(self.rec_button, "Processing...")
         self.rec_button.layer().setBackgroundColor_(_PURPLE().CGColor())
+        self.rec_button.setEnabled_(False)
         self.status_item.setTitle_("...")
 
     @objc.python_method
@@ -1725,7 +1757,12 @@ TIPS
         self._status_dot.layer().setBackgroundColor_(_GREEN().CGColor())
         self._set_btn_title(self.rec_button, "Start Recording")
         self.rec_button.layer().setBackgroundColor_(_GREEN().CGColor())
+        self.rec_button.setEnabled_(True)
         self.status_item.setTitle_("SF")
+        self._float_mode = None
+        if self._level_timer is not None:
+            self._level_timer.invalidate()
+            self._level_timer = None
         self._set_float_color(_GREEN())
         self._last_text_label.setStringValue_(response)
 
@@ -1742,6 +1779,7 @@ TIPS
         self._status_dot.layer().setBackgroundColor_(_ACCENT().CGColor())
         self._set_btn_title(self.rec_button, "Start Recording")
         self.rec_button.layer().setBackgroundColor_(_GREEN().CGColor())
+        self.rec_button.setEnabled_(True)
         self.status_item.setTitle_("SF")
         self._hide_float()
 
@@ -1752,6 +1790,7 @@ TIPS
         self._status_dot.layer().setBackgroundColor_(_RED().CGColor())
         self._set_btn_title(self.rec_button, "Start Recording")
         self.rec_button.layer().setBackgroundColor_(_GREEN().CGColor())
+        self.rec_button.setEnabled_(True)
         self.status_item.setTitle_("SF")
         if self.config.sound_feedback:
             play_error_sound()
@@ -1798,7 +1837,9 @@ TIPS
         with d._lock:
             d._queue.append(wrapper)
         d.performSelectorOnMainThread_withObject_waitUntilDone_("drain:", None, False)
-        event.wait(timeout=5.0)
+        if not event.wait(timeout=5.0):
+            logger.error("_run_on_main_sync timed out after 5s — main thread may be blocked")
+            return None
         if error[0] is not None:
             raise error[0]
         return result[0]

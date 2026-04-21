@@ -37,7 +37,8 @@ class Transcriber:
     # ------------------------------------------------------------------
 
     def transcribe(self, audio_data: bytes, app_context: str = "",
-                   before_text: str = "", after_text: str = "") -> str:
+                   before_text: str = "", after_text: str = "",
+                   skip_cleanup: bool = False) -> str:
         """Transcribe WAV audio bytes into text.
 
         Args:
@@ -45,6 +46,7 @@ class Transcriber:
             app_context: Name of the frontmost app (for context-aware cleanup).
             before_text: Text before cursor in the active text field.
             after_text: Text after cursor in the active text field.
+            skip_cleanup: If True, return raw transcription without AI cleanup.
 
         Returns:
             The transcribed (and optionally cleaned-up) text.
@@ -95,9 +97,14 @@ class Transcriber:
         # Whisper often prepends dashes when it hears a brief pause or noise
         raw_text = raw_text.strip().lstrip("-–—").strip()
 
-        if self.editing_strength != "off" and raw_text:
-            return self.cleanup_text(raw_text, self.language, app_context,
-                                     before_text, after_text)
+        if not skip_cleanup and self.editing_strength != "off" and raw_text:
+            try:
+                return self.cleanup_text(raw_text, self.language, app_context,
+                                         before_text, after_text)
+            except Exception:
+                logger.warning("Text cleanup failed, returning raw transcription",
+                               exc_info=True)
+                return raw_text
 
         return raw_text
 

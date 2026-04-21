@@ -3,6 +3,7 @@
 import sys
 import os
 import logging
+from logging.handlers import RotatingFileHandler
 
 def main():
     # Activate the venv site-packages so the embedded Python binary
@@ -23,7 +24,11 @@ def main():
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.FileHandler(os.path.expanduser('~/.speakflow/speakflow.log')),
+            RotatingFileHandler(
+                os.path.expanduser('~/.speakflow/speakflow.log'),
+                maxBytes=2 * 1024 * 1024,  # 2 MB
+                backupCount=1,
+            ),
             logging.StreamHandler()
         ]
     )
