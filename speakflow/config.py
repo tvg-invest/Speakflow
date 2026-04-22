@@ -33,6 +33,8 @@ DEFAULTS: dict[str, Any] = {
     "first_run": True,
     "editing_strength": "medium",  # "off", "light", "medium"
     "personal_dictionary": [],     # custom words/names for transcription
+    "active_mode": "dictation",    # dictation, ask, vision, vibecode, or custom name
+    "custom_modes": [],            # list of {"name": str, "prompt": str}
 }
 
 
@@ -236,6 +238,22 @@ class Config:
     @personal_dictionary.setter
     def personal_dictionary(self, value: list) -> None:
         self.set("personal_dictionary", value)
+
+    @property
+    def active_mode(self) -> str:
+        return self._data.get("active_mode", "dictation")
+
+    @active_mode.setter
+    def active_mode(self, value: str) -> None:
+        self.set("active_mode", value)
+
+    @property
+    def custom_modes(self) -> list:
+        return self._data.get("custom_modes", [])
+
+    @custom_modes.setter
+    def custom_modes(self, value: list) -> None:
+        self.set("custom_modes", value)
 
     def __repr__(self) -> str:
         safe = {k: ("***" if k == "openai_api_key" else v) for k, v in self._data.items()}

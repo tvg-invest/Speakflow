@@ -335,6 +335,170 @@ class Transcriber:
         except openai.APIError as exc:
             raise RuntimeError(f"Context query failed: {exc}") from exc
 
+    def ask_question(self, question: str, model: str = "gpt-4o",
+                     app_context: str = "") -> str:
+        """Send a voice-transcribed question to GPT and return the answer."""
+        context_hint = ""
+        if app_context:
+            context_hint = f"\nThe user is currently in: {app_context}"
+
+        dictionary_hint = ""
+        if self.personal_dictionary:
+            words = ", ".join(self.personal_dictionary)
+            dictionary_hint = (
+                f"\n\nPERSONAL DICTIONARY — preserve these words/names exactly "
+                f"as spelled: {words}"
+            )
+
+        system_prompt = (
+            "You are a helpful AI assistant. The user asked a question via voice "
+            "dictation. Answer concisely and directly. Match the language of the "
+            "user's question. Output ONLY your answer, no preamble."
+            + context_hint + dictionary_hint
+        )
+
+        try:
+            logger.debug("AI Ask with model=%s", model)
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": question},
+                ],
+                timeout=30,
+            )
+            if not response.choices:
+                return ""
+            content = response.choices[0].message.content
+            return content.strip() if content else ""
+        except openai.AuthenticationError:
+            raise RuntimeError("Authentication failed. Check your API key.")
+        except openai.RateLimitError:
+            raise RuntimeError("Rate limit exceeded. Wait a moment and retry.")
+        except openai.APIConnectionError:
+            raise RuntimeError("Cannot reach the OpenAI API. Check your connection.")
+        except openai.APIError as exc:
+            raise RuntimeError(f"AI question failed: {exc}") from exc
+
+    def vision_query(self, screenshot_b64: str, voice_instruction: str,
+                     model: str = "gpt-4o", app_context: str = "") -> str:
+        """Analyze a screenshot with a voice instruction using GPT-4o vision."""
+        context_hint = ""
+        if app_context:
+            context_hint = f"\nThe user is currently in: {app_context}"
+
+        dictionary_hint = ""
+        if self.personal_dictionary:
+            words = ", ".join(self.personal_dictionary)
+            dictionary_hint = (
+                f"\n\nPERSONAL DICTIONARY — preserve these words/names exactly "
+                f"as spelled: {words}"
+            )
+
+        system_prompt = (
+            "You are a helpful AI assistant with vision. The user has shared a "
+            "screenshot of their screen and is giving you a voice instruction. "
+            "Analyze what you see on screen and respond to their request. Be "
+            "concise and helpful. Match the language of the user's instruction. "
+            "Output ONLY your response."
+            + context_hint + dictionary_hint
+        )
+
+        try:
+            logger.debug("Vision query with model=%s", model)
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": [
+                        {"type": "text", "text": voice_instruction},
+                        {"type": "image_url", "image_url": {
+                            "url": f"data:image/jpeg;base64,{screenshot_b64}",
+                            "detail": "auto",
+                        }},
+                    ]},
+                ],
+                timeout=60,
+            )
+            if not response.choices:
+                return ""
+            content = response.choices[0].message.content
+            return content.strip() if content else ""
+        except openai.AuthenticationError:
+            raise RuntimeError("Authentication failed. Check your API key.")
+        except openai.RateLimitError:
+            raise RuntimeError("Rate limit exceeded. Wait a moment and retry.")
+        except openai.APIConnectionError:
+            raise RuntimeError("Cannot reach the OpenAI API. Check your connection.")
+        except openai.APIError as exc:
+            raise RuntimeError(f"Vision query failed: {exc}") from exc
+
+    def vibecode_prompt(self, description: str, model: str = "gpt-4o") -> str:
+        """Convert a voice description into an optimized coding prompt."""
+        system_prompt = (
+            "You are an expert prompt engineer for AI coding assistants "
+            "(Claude Code, Cursor, GitHub Copilot, Lovable, etc.). The user will "
+            "describe what they want to build or change via voice. Convert their "
+            "description into a clear, technically precise prompt optimized for "
+            "an AI coding agent.\n\n"
+            "The prompt should include:\n"
+            "- Clear objective\n"
+            "- Technical requirements and constraints\n"
+            "- Expected behavior\n"
+            "- Edge cases to handle (if relevant)\n\n"
+            "Output ONLY the optimized prompt. No explanations, no labels, no "
+            "quotes around it. Match the language of the user's description."
+        )
+
+        try:
+            logger.debug("VibeCode prompt generation with model=%s", model)
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": description},
+                ],
+                timeout=30,
+            )
+            if not response.choices:
+                return ""
+            content = response.choices[0].message.content
+            return content.strip() if content else ""
+        except openai.AuthenticationError:
+            raise RuntimeError("Authentication failed. Check your API key.")
+        except openai.RateLimitError:
+            raise RuntimeError("Rate limit exceeded. Wait a moment and retry.")
+        except openai.APIConnectionError:
+            raise RuntimeError("Cannot reach the OpenAI API. Check your connection.")
+        except openai.APIError as exc:
+            raise RuntimeError(f"VibeCode generation failed: {exc}") from exc
+
+    def custom_mode_query(self, transcribed_text: str, system_prompt: str,
+                          model: str = "gpt-4o") -> str:
+        """Apply a custom mode's prompt template to transcribed text."""
+        try:
+            logger.debug("Custom mode query with model=%s", model)
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": transcribed_text},
+                ],
+                timeout=30,
+            )
+            if not response.choices:
+                return ""
+            content = response.choices[0].message.content
+            return content.strip() if content else ""
+        except openai.AuthenticationError:
+            raise RuntimeError("Authentication failed. Check your API key.")
+        except openai.RateLimitError:
+            raise RuntimeError("Rate limit exceeded. Wait a moment and retry.")
+        except openai.APIConnectionError:
+            raise RuntimeError("Cannot reach the OpenAI API. Check your connection.")
+        except openai.APIError as exc:
+            raise RuntimeError(f"Custom mode failed: {exc}") from exc
+
     def set_language(self, language: str) -> None:
         """Change the target transcription language.
 

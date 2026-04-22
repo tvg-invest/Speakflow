@@ -37,6 +37,7 @@ from .config import Config
 from . import history
 from .hotkey import HotkeyListener, is_modifier_only, _KEYCODE_MAP
 from .sounds import play_error_sound, play_start_sound, play_stop_sound, set_volume
+from .screen_capture import capture_screen_base64
 from .text_inserter import TextInserter
 from .transcriber import Transcriber
 
@@ -62,6 +63,23 @@ _DIM       = lambda: NSColor.colorWithCalibratedRed_green_blue_alpha_(0.50, 0.50
 _WHITE     = lambda: NSColor.whiteColor()
 _SEC_BG    = lambda: NSColor.colorWithCalibratedRed_green_blue_alpha_(0.18, 0.18, 0.23, 1.0)
 _SEC_EDGE  = lambda: NSColor.colorWithCalibratedRed_green_blue_alpha_(0.30, 0.30, 0.36, 1.0)
+_TEAL      = lambda: NSColor.colorWithCalibratedRed_green_blue_alpha_(0.25, 0.78, 0.85, 1.0)
+
+# ── Mode system ────────────────────────────────────────────────
+_BUILTIN_MODES = ["dictation", "ask", "vision", "vibecode"]
+_MODE_NAMES = {
+    "dictation": "Dictation",
+    "ask": "AI Ask",
+    "vision": "Screen Vision",
+    "vibecode": "VibeCode",
+}
+_MODE_IDS = {v: k for k, v in _MODE_NAMES.items()}
+_MODE_COLORS = {
+    "dictation": _ACCENT,
+    "ask": _TEAL,
+    "vision": _GOLD,
+    "vibecode": _PURPLE,
+}
 
 
 class MainThreadDispatcher(NSObject):
@@ -143,6 +161,9 @@ class SpeakFlowUI(NSObject):
         self._guide_win = None
         self._key_monitor = None
         self._vol_save_timer = None
+        self._screenshot_b64 = ""
+        self._mode_mgr_win = None
+        self._add_mode_win = None
 
         # Core components
         self.audio_recorder = AudioRecorder(
@@ -396,6 +417,19 @@ class SpeakFlowUI(NSObject):
         show = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Show SpeakFlow", "showWindow:", "")
         show.setTarget_(self)
         menu.addItem_(show)
+
+        # Mode submenu
+        mode_sub = NSMenu.alloc().init()
+        for mode_id in _BUILTIN_MODES:
+            item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+                _MODE_NAMES[mode_id], "statusBarModeSelected:", "")
+            item.setTarget_(self)
+            mode_sub.addItem_(item)
+        mode_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Mode", None, "")
+        mode_item.setSubmenu_(mode_sub)
+        menu.addItem_(mode_item)
+        self._status_mode_menu = mode_sub
+
         update_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Check for Updates", "checkForUpdates:", "")
         update_item.setTarget_(self)
         menu.addItem_(update_item)
@@ -411,7 +445,7 @@ class SpeakFlowUI(NSObject):
 
     @objc.python_method
     def _build_window(self):
-        W, H = 460, 862
+        W, H = 460, 898
         screen = NSScreen.mainScreen().frame()
         cx = (screen.size.width - W) / 2
         cy = (screen.size.height - H) / 2
@@ -441,13 +475,33 @@ class SpeakFlowUI(NSObject):
         y -= 40
 
         # ── Status card ──
-        card_h = 110
+        card_h = 146
         sc = self._card(v, pad, y - card_h, cw, card_h)
 
         self._status_dot = self._dot(sc, 20, card_h - 42, 10, _ACCENT())
         self.status_label = self._label(sc, "Ready", 38, card_h - 48, cw - 56, 24,
                                         NSFont.systemFontOfSize_weight_(15, NSFontWeightSemibold),
                                         _ACCENT(), True)
+
+        # Mode selector
+        self._label(sc, "Mode", 20, 58, 50, 24,
+                    NSFont.systemFontOfSize_(12), _DIM())
+        self.mode_popup = NSPopUpButton.alloc().initWithFrame_pullsDown_(
+            NSMakeRect(70, 56, cw - 160, 26), False)
+        self._populate_mode_popup()
+        self.mode_popup.setTarget_(self)
+        self.mode_popup.setAction_("modeChanged:")
+        self.mode_popup.setWantsLayer_(True)
+        self.mode_popup.setBordered_(False)
+        self.mode_popup.layer().setCornerRadius_(6)
+        self.mode_popup.layer().setBackgroundColor_(_SEC_BG().CGColor())
+        self.mode_popup.layer().setBorderWidth_(1)
+        self.mode_popup.layer().setBorderColor_(_SEC_EDGE().CGColor())
+        sc.addSubview_(self.mode_popup)
+
+        self.manage_modes_btn = self._ghost_btn(sc, "Edit", cw - 70, 56, 50, 26)
+        self.manage_modes_btn.setTarget_(self)
+        self.manage_modes_btn.setAction_("manageModes:")
 
         bw, bh = 180, 34
         self.rec_button = self._styled_btn(sc, "Start Recording",
@@ -704,7 +758,7 @@ class SpeakFlowUI(NSObject):
         self._update_btn.setAction_("checkForUpdates:")
         y -= 30
 
-        self._label(v, "Hotkey = dictate  ·  Context Key = select text + AI query",
+        self._label(v, "Switch modes via popup above or right-click the floating bar",
                     pad, y, cw, 14, NSFont.systemFontOfSize_(10), _DIM(), True)
 
     # ── Floating waveform indicator ─────────────────────────────
@@ -778,6 +832,11 @@ class SpeakFlowUI(NSObject):
         click_btn.setAction_("floatClicked:")
         blur.addSubview_(click_btn)
 
+        # Right-click menu for quick mode switching
+        self._float_menu = NSMenu.alloc().init()
+        self._populate_float_menu()
+        click_btn.setMenu_(self._float_menu)
+
         self._float_win.contentView().addSubview_(blur)
         self._float_fh = fh
 
@@ -834,7 +893,7 @@ class SpeakFlowUI(NSObject):
 
     @objc.python_method
     def _hide_float(self):
-        """Reset float to idle state (always visible)."""
+        """Reset float to idle state (always visible, mode-coloured)."""
         self._float_mode = None
         if self._level_timer is not None:
             self._level_timer.invalidate()
@@ -845,7 +904,8 @@ class SpeakFlowUI(NSObject):
         for bar in self._float_bars:
             old_x = bar.frame().origin.x
             bar.setFrame_(NSMakeRect(old_x, (fh - min_h) / 2, bw, min_h))
-        self._set_float_color(_ACCENT())
+        mode_color = _MODE_COLORS.get(self.config.active_mode, _ACCENT)()
+        self._set_float_color(mode_color)
         self._float_win.orderFront_(None)
 
     # ── History window ──────────────────────────────────────────
@@ -894,34 +954,57 @@ QUICK START
 
 1.  Make sure your API key is set (Settings → API Key)
 2.  Grant Accessibility and Microphone permissions when prompted
-3.  Use the hotkey to start dictating — text appears at your cursor
+3.  Choose a mode and use the hotkey to start
+
+
+MODES
+
+SpeakFlow has multiple modes — switch in the main window or right-click
+the floating indicator:
+
+  Dictation (default) — transcribes your speech and types it at your cursor.
+      With text selected, it enters Context mode: your speech becomes an AI
+      instruction about the selection (e.g. "make this more formal").
+
+  AI Ask — ask any question by voice. The answer is copied to your clipboard.
+      Select text first to give the AI context for your question.
+
+  Screen Vision — captures your screen, then listens to your voice instruction.
+      The AI analyzes what it sees and responds. Great for "what does this
+      error mean?" or "summarize what's on my screen".
+      Requires Screen Recording permission.
+
+  VibeCode — describe what you want to build. Your voice is converted into
+      a precise, optimized prompt for AI coding tools (Claude Code, Cursor, etc.).
+      Select existing code to include it as context.
+
+  Custom Modes — create your own! Click "Edit" next to the mode selector to
+      add custom modes with your own system prompts (e.g. "Translate to English",
+      "Summarize", "Fix grammar").
 
 
 HOW IT WORKS
 
 {hotkey_desc}.
 
-SpeakFlow automatically detects what you want:
+In Dictation mode, SpeakFlow automatically detects context:
 
   No text selected — your speech is transcribed and typed at your cursor.
 
-  Text selected — SpeakFlow grabs the selection as context, listens to
-  your voice instruction, and uses AI to respond. The result is copied
-  to your clipboard.
+  Text selected — SpeakFlow grabs the selection, listens to your voice
+  instruction, and uses AI to respond. The result is copied to your clipboard.
 
-Examples with context:
-  • Select a paragraph → hold {hotkey_str.upper()} → say "make this more formal"
-  • Select code → hold {hotkey_str.upper()} → say "add error handling"
-  • Select an email → hold {hotkey_str.upper()} → say "write a reply"
+All other modes record your voice, process it with AI, and copy the result
+to your clipboard.
 
 
 FLOATING INDICATOR
 
-The small floating bar at the bottom of your screen shows recording status.
-Click it to start a quick recording — the result is copied to your clipboard
-instead of pasted, so you can paste it wherever you want.
+The small floating bar at the bottom of your screen shows the active mode
+and recording status. Click to start a quick recording (copies to clipboard).
+Right-click to switch modes.
 
-  Blue dot = idle  ·  Green = ready  ·  Red = recording  ·  Orange = processing
+  Colour shows active mode  ·  Red = recording  ·  Orange = processing
 
 
 SETTINGS
@@ -1201,6 +1284,246 @@ TIPS
         self.config.auto_start = enabled
         self._set_auto_start(enabled)
 
+    # ── Mode management ──────────────────────────────────────────
+
+    @objc.python_method
+    def _populate_mode_popup(self):
+        self.mode_popup.removeAllItems()
+        for mode_id in _BUILTIN_MODES:
+            self.mode_popup.addItemWithTitle_(_MODE_NAMES[mode_id])
+        custom = self.config.custom_modes
+        if custom:
+            self.mode_popup.menu().addItem_(NSMenuItem.separatorItem())
+            for cm in custom:
+                self.mode_popup.addItemWithTitle_(cm["name"])
+        current = self.config.active_mode
+        if current in _MODE_NAMES:
+            self.mode_popup.selectItemWithTitle_(_MODE_NAMES[current])
+        else:
+            self.mode_popup.selectItemWithTitle_(current)
+
+    @objc.python_method
+    def _populate_float_menu(self):
+        self._float_menu.removeAllItems()
+        for mode_id in _BUILTIN_MODES:
+            item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+                _MODE_NAMES[mode_id], "floatModeSelected:", "")
+            item.setTarget_(self)
+            if self.config.active_mode == mode_id:
+                item.setState_(1)
+            self._float_menu.addItem_(item)
+        custom = self.config.custom_modes
+        if custom:
+            self._float_menu.addItem_(NSMenuItem.separatorItem())
+            for cm in custom:
+                item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+                    cm["name"], "floatModeSelected:", "")
+                item.setTarget_(self)
+                if self.config.active_mode == cm["name"]:
+                    item.setState_(1)
+                self._float_menu.addItem_(item)
+
+    @objc.python_method
+    def _update_mode_idle_color(self):
+        if not self._recording and not self._processing:
+            color = _MODE_COLORS.get(self.config.active_mode, _ACCENT)()
+            self._set_float_color(color)
+            self._status_dot.layer().setBackgroundColor_(color.CGColor())
+            self.status_label.setTextColor_(color)
+
+    def modeChanged_(self, sender):
+        title = sender.titleOfSelectedItem()
+        mode_id = _MODE_IDS.get(title)
+        self.config.active_mode = mode_id if mode_id else title
+        self._populate_float_menu()
+        self._update_mode_idle_color()
+        logger.info("Mode changed to: %s", self.config.active_mode)
+
+    def floatModeSelected_(self, sender):
+        title = sender.title()
+        mode_id = _MODE_IDS.get(title)
+        self.config.active_mode = mode_id if mode_id else title
+        self._populate_float_menu()
+        self._populate_mode_popup()
+        current = self.config.active_mode
+        if current in _MODE_NAMES:
+            self.mode_popup.selectItemWithTitle_(_MODE_NAMES[current])
+        else:
+            self.mode_popup.selectItemWithTitle_(current)
+        self._update_mode_idle_color()
+        logger.info("Mode changed via float: %s", self.config.active_mode)
+
+    def statusBarModeSelected_(self, sender):
+        title = sender.title()
+        mode_id = _MODE_IDS.get(title)
+        self.config.active_mode = mode_id if mode_id else title
+        self._populate_float_menu()
+        self._populate_mode_popup()
+        current = self.config.active_mode
+        if current in _MODE_NAMES:
+            self.mode_popup.selectItemWithTitle_(_MODE_NAMES[current])
+        else:
+            self.mode_popup.selectItemWithTitle_(current)
+        self._update_mode_idle_color()
+
+    def manageModes_(self, sender):
+        self._build_mode_manager()
+
+    @objc.python_method
+    def _build_mode_manager(self):
+        w, h = 420, 400
+        if self._mode_mgr_win is None:
+            screen = NSScreen.mainScreen().frame()
+            self._mode_mgr_win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+                NSMakeRect((screen.size.width - w) / 2, (screen.size.height - h) / 2, w, h),
+                1 | 2 | 4 | 8, NSBackingStoreBuffered, False)
+            self._mode_mgr_win.setTitle_("Custom Modes")
+            self._mode_mgr_win.setBackgroundColor_(_BG())
+            self._mode_mgr_win.setReleasedWhenClosed_(False)
+            self._mode_mgr_win.setTitlebarAppearsTransparent_(True)
+            self._mode_mgr_win.setTitleVisibility_(1)
+        cv = self._mode_mgr_win.contentView()
+        for sub in list(cv.subviews()):
+            sub.removeFromSuperview()
+
+        self._label(cv, "Custom Modes", 20, h - 48, 200, 24,
+                    NSFont.systemFontOfSize_weight_(16, NSFontWeightSemibold), _WHITE())
+        add_btn = self._styled_btn(cv, "Add New Mode", w - 170, h - 48, 140, 30, color=_ACCENT())
+        add_btn.setTarget_(self)
+        add_btn.setAction_("addCustomMode:")
+
+        modes = self.config.custom_modes
+        y_pos = h - 90
+        if not modes:
+            self._label(cv, "No custom modes yet. Click 'Add New Mode' to create one.",
+                        20, y_pos, w - 40, 44, NSFont.systemFontOfSize_(13), _DIM())
+        else:
+            for i, cm in enumerate(modes):
+                mc = self._card(cv, 16, y_pos - 66, w - 32, 62)
+                self._label(mc, cm["name"], 16, 30, 220, 24,
+                            NSFont.systemFontOfSize_weight_(14, NSFontWeightSemibold), _WHITE())
+                preview = cm["prompt"][:70] + ("..." if len(cm["prompt"]) > 70 else "")
+                self._label(mc, preview, 16, 8, w - 130, 20,
+                            NSFont.systemFontOfSize_(11), _DIM())
+                del_btn = self._ghost_btn(mc, "Delete", w - 32 - 84, 18, 64, 26)
+                del_btn.setTag_(i)
+                del_btn.setTarget_(self)
+                del_btn.setAction_("deleteCustomMode:")
+                y_pos -= 74
+
+        self._mode_mgr_win.makeKeyAndOrderFront_(None)
+        NSApp.activateIgnoringOtherApps_(True)
+
+    def addCustomMode_(self, sender):
+        w, h = 400, 320
+        if self._add_mode_win is None:
+            screen = NSScreen.mainScreen().frame()
+            self._add_mode_win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+                NSMakeRect((screen.size.width - w) / 2, (screen.size.height - h) / 2, w, h),
+                1 | 2 | 4, NSBackingStoreBuffered, False)
+            self._add_mode_win.setTitle_("Add Custom Mode")
+            self._add_mode_win.setBackgroundColor_(_BG())
+            self._add_mode_win.setReleasedWhenClosed_(False)
+            self._add_mode_win.setTitlebarAppearsTransparent_(True)
+            self._add_mode_win.setTitleVisibility_(1)
+        cv = self._add_mode_win.contentView()
+        for sub in list(cv.subviews()):
+            sub.removeFromSuperview()
+
+        self._label(cv, "Mode Name", 20, h - 54, 120, 24,
+                    NSFont.systemFontOfSize_(13), _DIM())
+        self._mode_name_field = NSTextField.alloc().initWithFrame_(
+            NSMakeRect(20, h - 82, w - 40, 28))
+        self._mode_name_field.setPlaceholderString_("e.g., Translate to English")
+        self._mode_name_field.setFont_(NSFont.systemFontOfSize_(13))
+        self._mode_name_field.setTextColor_(_WHITE())
+        self._mode_name_field.setDrawsBackground_(False)
+        self._mode_name_field.setBezeled_(False)
+        self._mode_name_field.setWantsLayer_(True)
+        self._mode_name_field.layer().setCornerRadius_(6)
+        self._mode_name_field.layer().setBackgroundColor_(
+            NSColor.colorWithCalibratedRed_green_blue_alpha_(0.12, 0.12, 0.16, 1.0).CGColor())
+        self._mode_name_field.layer().setBorderWidth_(1)
+        self._mode_name_field.layer().setBorderColor_(_SEC_EDGE().CGColor())
+        cv.addSubview_(self._mode_name_field)
+
+        self._label(cv, "System Prompt", 20, h - 112, 150, 24,
+                    NSFont.systemFontOfSize_(13), _DIM())
+        scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(20, 60, w - 40, h - 130))
+        scroll.setHasVerticalScroller_(True)
+        scroll.setBorderType_(0)
+        scroll.setWantsLayer_(True)
+        scroll.layer().setCornerRadius_(6)
+        scroll.layer().setBackgroundColor_(
+            NSColor.colorWithCalibratedRed_green_blue_alpha_(0.12, 0.12, 0.16, 1.0).CGColor())
+        scroll.layer().setBorderWidth_(1)
+        scroll.layer().setBorderColor_(_SEC_EDGE().CGColor())
+        self._mode_prompt_tv = NSTextView.alloc().initWithFrame_(
+            NSMakeRect(0, 0, w - 60, h - 130))
+        self._mode_prompt_tv.setEditable_(True)
+        self._mode_prompt_tv.setSelectable_(True)
+        self._mode_prompt_tv.setBackgroundColor_(NSColor.clearColor())
+        self._mode_prompt_tv.setTextColor_(_WHITE())
+        self._mode_prompt_tv.setFont_(NSFont.systemFontOfSize_(12))
+        self._mode_prompt_tv.setString_("")
+        scroll.setDocumentView_(self._mode_prompt_tv)
+        cv.addSubview_(scroll)
+
+        cancel_btn = self._ghost_btn(cv, "Cancel", w - 210, 18, 90, 32)
+        cancel_btn.setTarget_(self)
+        cancel_btn.setAction_("cancelAddMode:")
+        save_btn = self._styled_btn(cv, "Save", w - 110, 18, 90, 32, color=_GREEN())
+        save_btn.setTarget_(self)
+        save_btn.setAction_("saveCustomMode:")
+
+        self._add_mode_win.makeKeyAndOrderFront_(None)
+        NSApp.activateIgnoringOtherApps_(True)
+
+    def cancelAddMode_(self, sender):
+        self._add_mode_win.close()
+
+    def saveCustomMode_(self, sender):
+        name = self._mode_name_field.stringValue().strip()
+        prompt = self._mode_prompt_tv.string().strip()
+        if not name or not prompt:
+            return
+        modes = list(self.config.custom_modes)
+        for m in modes:
+            if m["name"] == name:
+                m["prompt"] = prompt
+                self.config.custom_modes = modes
+                self._populate_mode_popup()
+                self._populate_float_menu()
+                self._add_mode_win.close()
+                return
+        modes.append({"name": name, "prompt": prompt})
+        self.config.custom_modes = modes
+        self.config.active_mode = name
+        self._populate_mode_popup()
+        self.mode_popup.selectItemWithTitle_(name)
+        self._populate_float_menu()
+        self._update_mode_idle_color()
+        self._add_mode_win.close()
+        if self._mode_mgr_win is not None and self._mode_mgr_win.isVisible():
+            self._build_mode_manager()
+        logger.info("Custom mode added: %s", name)
+
+    def deleteCustomMode_(self, sender):
+        idx = sender.tag()
+        modes = list(self.config.custom_modes)
+        if 0 <= idx < len(modes):
+            deleted = modes[idx]["name"]
+            modes.pop(idx)
+            self.config.custom_modes = modes
+            self._populate_mode_popup()
+            self._populate_float_menu()
+            if self.config.active_mode == deleted:
+                self.config.active_mode = "dictation"
+                self.mode_popup.selectItemWithTitle_("Dictation")
+                self._update_mode_idle_color()
+            self._build_mode_manager()
+            logger.info("Custom mode deleted: %s", deleted)
+
     @objc.python_method
     def _set_auto_start(self, enabled):
         if enabled:
@@ -1370,18 +1693,38 @@ TIPS
         self._active_app = self._run_on_main_sync(self._get_active_app)
         self._target_running_app = self._run_on_main_sync(self._get_active_running_app)
 
-        # Auto-detect context: try to grab selection from the active app
+        mode = self.config.active_mode
+
         self._selected_text = ""
         self._before_text = ""
         self._after_text = ""
         self._context_mode = False
+        self._screenshot_b64 = ""
+
         if not self._float_triggered:
-            sel = self._run_on_main_sync(self._grab_selection)
-            if sel and sel.strip():
-                self._selected_text = sel
-                self._context_mode = True
-                logger.info("Context mode: grabbed %d chars from %s.",
-                            len(sel), self._active_app)
+            # Vision: capture screen before recording
+            if mode == "vision":
+                self._screenshot_b64 = capture_screen_base64()
+                if not self._screenshot_b64:
+                    self._recording = False
+                    self._float_triggered = False
+                    self._run_on_main(lambda: self._ui_error(
+                        "Screen capture failed — grant Screen Recording permission"))
+                    return
+
+            # Context mode only activates in dictation
+            if mode == "dictation":
+                sel = self._run_on_main_sync(self._grab_selection)
+                if sel and sel.strip():
+                    self._selected_text = sel
+                    self._context_mode = True
+                    logger.info("Context mode: grabbed %d chars from %s.",
+                                len(sel), self._active_app)
+            elif mode in ("ask", "vibecode") or mode not in _BUILTIN_MODES:
+                sel = self._run_on_main_sync(self._grab_selection)
+                if sel and sel.strip():
+                    self._selected_text = sel
+
             if self.config.context_cleanup:
                 result = self._run_on_main_sync(self._grab_surrounding_text)
                 if result:
@@ -1392,6 +1735,7 @@ TIPS
             self._context_mode = False
             self._processing = False
             self._float_triggered = False
+            self._screenshot_b64 = ""
             self._run_on_main(self._ui_ready)
             return
 
@@ -1413,6 +1757,7 @@ TIPS
                 self._context_mode = False
                 self._float_triggered = False
                 self._processing = False
+                self._screenshot_b64 = ""
                 self._run_on_main(self._ui_ready)
                 return
             self.audio_recorder.start_recording()
@@ -1424,15 +1769,17 @@ TIPS
                 self._context_mode = False
                 self._float_triggered = False
                 self._processing = False
+                self._screenshot_b64 = ""
                 self._run_on_main(self._ui_ready)
                 return
-            logger.info("Recording started (app: %s).", self._active_app)
+            logger.info("Recording started (mode=%s, app=%s).", mode, self._active_app)
         except Exception:
             logger.error("Record start failed:\n%s", traceback.format_exc())
             self._recording = False
             self._context_mode = False
             self._processing = False
             self._float_triggered = False
+            self._screenshot_b64 = ""
             self._run_on_main(self._ui_ready)
 
     @objc.python_method
@@ -1462,6 +1809,7 @@ TIPS
             self._processing = False
             self._context_mode = False
             self._float_triggered = False
+            self._screenshot_b64 = ""
         self._run_on_main(lambda: self._ui_error(msg))
 
     # ── Context mode (select + voice → AI response) ────────────
@@ -1606,6 +1954,7 @@ TIPS
             self._processing = False
             self._context_mode = False
             self._float_triggered = False
+            self._screenshot_b64 = ""
 
     # ── Regular recording ──────────────────────────────────────
 
@@ -1636,52 +1985,107 @@ TIPS
 
     @objc.python_method
     def _transcribe_and_insert(self, audio_data):
+        mode = self.config.active_mode
         try:
-            app_ctx = (self._active_app or "") if self.config.context_cleanup else ""
-            text = self.transcriber.transcribe(
-                audio_data, app_context=app_ctx,
-                before_text=self._before_text, after_text=self._after_text,
-            )
-            if not text or not text.strip():
-                self._run_on_main(lambda: self._ui_error("No speech detected."))
-                return
-            logger.info("Transcription: %d chars.", len(text))
-
-            if self._float_triggered:
-                # Float button has no cursor target — copy to clipboard instead
-                self._run_on_main_sync(lambda: self._set_clipboard(text))
-                self._run_on_main(lambda: self._ui_done_clipboard(text))
+            if mode == "dictation":
+                self._process_dictation(audio_data)
             else:
-                # Hotkey — insert text at cursor in the active app.
-                # Re-activate the original app in case focus shifted during
-                # transcription (the user may have clicked elsewhere).
-                reactivated = self._reactivate_target_app()
-                logger.info("Reactivate %s: %s", self._active_app, reactivated)
-                if reactivated:
-                    _time.sleep(0.15)  # Let target app settle and receive keyboard focus
-                    self.text_inserter.insert_text(text)
-                    self._run_on_main(lambda: self._ui_done(text))
-                else:
-                    # Could not restore focus — copy to clipboard instead
-                    self._run_on_main_sync(lambda: self._set_clipboard(text))
-                    self._run_on_main(lambda: self._ui_done_clipboard(text))
+                self._process_ai_mode(audio_data, mode)
         except RuntimeError as exc:
-            logger.error("Transcribe failed: %s", exc)
+            logger.error("Processing failed: %s", exc)
             msg = str(exc)
             self._run_on_main(lambda: self._ui_error(msg))
         except Exception:
-            logger.error("Transcribe failed:\n%s", traceback.format_exc())
-            self._run_on_main(lambda: self._ui_error("Transcription failed."))
-        else:
-            # Save to history only after successful insertion/clipboard copy
-            try:
-                history.add(text, app_name=self._active_app, language=self.config.language)
-            except Exception:
-                logger.warning("Failed to save history: %s", traceback.format_exc().splitlines()[-1])
+            logger.error("Processing failed:\n%s", traceback.format_exc())
+            self._run_on_main(lambda: self._ui_error("Processing failed."))
         finally:
             self._processing = False
             self._float_triggered = False
             self._target_running_app = None
+            self._screenshot_b64 = ""
+
+    @objc.python_method
+    def _process_dictation(self, audio_data):
+        app_ctx = (self._active_app or "") if self.config.context_cleanup else ""
+        text = self.transcriber.transcribe(
+            audio_data, app_context=app_ctx,
+            before_text=self._before_text, after_text=self._after_text,
+        )
+        if not text or not text.strip():
+            self._run_on_main(lambda: self._ui_error("No speech detected."))
+            return
+        logger.info("Transcription: %d chars.", len(text))
+
+        if self._float_triggered:
+            self._run_on_main_sync(lambda: self._set_clipboard(text))
+            self._run_on_main(lambda: self._ui_done_clipboard(text))
+        else:
+            reactivated = self._reactivate_target_app()
+            logger.info("Reactivate %s: %s", self._active_app, reactivated)
+            if reactivated:
+                _time.sleep(0.15)
+                self.text_inserter.insert_text(text)
+                self._run_on_main(lambda: self._ui_done(text))
+            else:
+                self._run_on_main_sync(lambda: self._set_clipboard(text))
+                self._run_on_main(lambda: self._ui_done_clipboard(text))
+        try:
+            history.add(text, app_name=self._active_app, language=self.config.language)
+        except Exception:
+            logger.warning("Failed to save history", exc_info=True)
+
+    @objc.python_method
+    def _process_ai_mode(self, audio_data, mode):
+        raw = self.transcriber.transcribe(audio_data, skip_cleanup=True)
+        if not raw or not raw.strip():
+            self._run_on_main(lambda: self._ui_error("No speech detected."))
+            return
+        logger.info("AI mode '%s' instruction: %s", mode, raw[:100])
+        self._run_on_main(self._ui_mode_thinking)
+        app_ctx = (self._active_app or "") if self.config.context_cleanup else ""
+
+        if mode == "ask":
+            question = raw
+            if self._selected_text:
+                question = f"{raw}\n\nSelected text:\n---\n{self._selected_text}\n---"
+            response = self.transcriber.ask_question(
+                question, model=self.config.context_model, app_context=app_ctx)
+            label = "AI Ask"
+        elif mode == "vision":
+            response = self.transcriber.vision_query(
+                self._screenshot_b64, raw,
+                model=self.config.context_model, app_context=app_ctx)
+            label = "Vision"
+        elif mode == "vibecode":
+            description = raw
+            if self._selected_text:
+                description = f"{raw}\n\nExisting code:\n```\n{self._selected_text}\n```"
+            response = self.transcriber.vibecode_prompt(
+                description, model=self.config.context_model)
+            label = "VibeCode"
+        else:
+            mode_config = None
+            for cm in self.config.custom_modes:
+                if cm["name"] == mode:
+                    mode_config = cm
+                    break
+            if mode_config is None:
+                self._run_on_main(lambda: self._ui_error(f"Mode not found"))
+                return
+            user_input = raw
+            if self._selected_text:
+                user_input = f"{raw}\n\nSelected text:\n---\n{self._selected_text}\n---"
+            response = self.transcriber.custom_mode_query(
+                user_input, mode_config["prompt"], model=self.config.context_model)
+            label = mode
+
+        if not response or not response.strip():
+            self._run_on_main(lambda: self._ui_error("No response generated."))
+            return
+        self._run_on_main_sync(lambda: self._set_clipboard(response))
+        history.add(f"[{label}] {raw}\n→ {response}",
+                    app_name=self._active_app, language=self.config.language)
+        self._run_on_main(lambda: self._ui_done_clipboard(response))
 
     # ── UI state updates ────────────────────────────────────────
 
@@ -1777,10 +2181,29 @@ TIPS
         threading.Timer(2.5, _auto_clear).start()
 
     @objc.python_method
+    def _ui_mode_thinking(self):
+        mode = self.config.active_mode
+        labels = {
+            "ask": "AI thinking...",
+            "vision": "Analyzing screen...",
+            "vibecode": "Generating prompt...",
+        }
+        label = labels.get(mode, "Processing...")
+        self.status_label.setStringValue_(label)
+        self.status_label.setTextColor_(_ORANGE())
+        self._status_dot.layer().setBackgroundColor_(_ORANGE().CGColor())
+        self._set_btn_title(self.rec_button, "Processing...")
+        self.rec_button.layer().setBackgroundColor_(_ORANGE().CGColor())
+        self.rec_button.setEnabled_(False)
+        self.status_item.setTitle_("...")
+        self._show_float("transcribing", _ORANGE())
+
+    @objc.python_method
     def _ui_ready(self):
+        mode_color = _MODE_COLORS.get(self.config.active_mode, _ACCENT)()
         self.status_label.setStringValue_("Ready")
-        self.status_label.setTextColor_(_ACCENT())
-        self._status_dot.layer().setBackgroundColor_(_ACCENT().CGColor())
+        self.status_label.setTextColor_(mode_color)
+        self._status_dot.layer().setBackgroundColor_(mode_color.CGColor())
         self._set_btn_title(self.rec_button, "Start Recording")
         self.rec_button.layer().setBackgroundColor_(_GREEN().CGColor())
         self.rec_button.setEnabled_(True)
