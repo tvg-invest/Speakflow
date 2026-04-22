@@ -8,6 +8,7 @@ import traceback
 from collections import deque
 from pathlib import Path
 
+import os
 import subprocess
 import time as _time
 import objc
@@ -362,6 +363,9 @@ class SpeakFlowUI(NSObject):
         """
         target = self._target_running_app
         if target is None:
+            return False
+        if target.processIdentifier() == os.getpid():
+            logger.info("Target is SpeakFlow itself — using clipboard fallback")
             return False
         if target.isTerminated():
             logger.warning("Target app %s terminated, cannot reactivate", self._active_app)
@@ -1654,7 +1658,7 @@ TIPS
                 reactivated = self._reactivate_target_app()
                 logger.info("Reactivate %s: %s", self._active_app, reactivated)
                 if reactivated:
-                    _time.sleep(0.1)  # Let target app settle before paste
+                    _time.sleep(0.15)  # Let target app settle and receive keyboard focus
                     self.text_inserter.insert_text(text)
                     self._run_on_main(lambda: self._ui_done(text))
                 else:

@@ -3,43 +3,39 @@
 from __future__ import annotations
 
 import logging
-import subprocess
 import threading
 import time
 
+from AppKit import NSPasteboard
 import Quartz
 
 logger = logging.getLogger(__name__)
 
+_PASTEBOARD_TYPE = "public.utf8-plain-text"
+
 # ---------------------------------------------------------------------------
-# Clipboard helpers (macOS pbcopy / pbpaste)
+# Clipboard helpers (NSPasteboard — synchronous, no subprocess overhead)
 # ---------------------------------------------------------------------------
 
 def _read_clipboard() -> str:
     """Return the current macOS clipboard contents as a string."""
     try:
-        result = subprocess.run(
-            ["pbpaste"],
-            capture_output=True,
-            timeout=2,
-        )
-        return result.stdout.decode("utf-8", errors="replace")
+        pb = NSPasteboard.generalPasteboard()
+        text = pb.stringForType_(_PASTEBOARD_TYPE)
+        return text if text else ""
     except Exception:
-        logger.warning("Failed to read clipboard via pbpaste", exc_info=True)
+        logger.warning("Failed to read clipboard", exc_info=True)
         return ""
 
 
 def _write_clipboard(text: str) -> None:
-    """Write *text* to the macOS clipboard via pbcopy."""
+    """Write *text* to the macOS clipboard."""
     try:
-        subprocess.run(
-            ["pbcopy"],
-            input=text.encode("utf-8"),
-            timeout=2,
-            check=True,
-        )
+        pb = NSPasteboard.generalPasteboard()
+        pb.clearContents()
+        pb.setString_forType_(text, _PASTEBOARD_TYPE)
     except Exception:
-        logger.error("Failed to write to clipboard via pbcopy", exc_info=True)
+        logger.error("Failed to write to clipboard", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -51,8 +47,12 @@ _kCGEventFlagMaskCommand = 1 << 20
 
 
 def _simulate_cmd_v() -> None:
-    """Simulate Cmd+V using Quartz CGEventPost."""
-    src = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStateHIDSystemState)
+    """Simulate Cmd+V using Quartz CGEventPost.
+
+    Uses a private event source so physical modifier keys (Caps Lock,
+    Shift held by the user, etc.) do not contaminate the synthetic event.
+    """
+    src = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStatePrivate)
 
     cmd_v_down = Quartz.CGEventCreateKeyboardEvent(src, _kVK_V, True)
     Quartz.CGEventSetFlags(cmd_v_down, _kCGEventFlagMaskCommand)
@@ -129,19 +129,19 @@ class TextInserter:
         original = _read_clipboard()
         try:
             _write_clipboard(text)
-            time.sleep(0.05)
+            time.sleep(0.02)
 
             logger.info("Firing Cmd+V paste (%d chars)", len(text))
             _simulate_cmd_v()
 
-            time.sleep(0.3)
+            time.sleep(0.5)
             logger.info("Paste completed")
         finally:
             _write_clipboard(original)
 
     def _insert_via_keyboard(self, text: str) -> None:
         """Type *text* character-by-character using Quartz CGEvent."""
-        src = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStateHIDSystemState)
+        src = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStatePrivate)
         delay = 0.02
 
         for char in text:
