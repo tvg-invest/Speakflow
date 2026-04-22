@@ -2342,7 +2342,7 @@ TIPS
         close_btn.setAction_("popupClose:")
         blur.addSubview_(close_btn)
 
-        # Response text
+        # Response text (use attributed string to force white on vibrancy)
         scroll = NSScrollView.alloc().initWithFrame_(
             NSMakeRect(12, pad_bottom, pw - 24, text_h))
         scroll.setHasVerticalScroller_(True)
@@ -2355,9 +2355,12 @@ TIPS
         tv.setSelectable_(True)
         tv.setBackgroundColor_(NSColor.clearColor())
         tv.setDrawsBackground_(False)
-        tv.setTextColor_(_WHITE())
-        tv.setFont_(NSFont.systemFontOfSize_(13.5))
-        tv.setString_(text)
+        attr_text = NSAttributedString.alloc().initWithString_attributes_(
+            text, {
+                NSFontAttributeName: NSFont.systemFontOfSize_(13.5),
+                NSForegroundColorAttributeName: _WHITE(),
+            })
+        tv.textStorage().setAttributedString_(attr_text)
         scroll.setDocumentView_(tv)
         blur.addSubview_(scroll)
 
