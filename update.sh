@@ -4,6 +4,7 @@ set -e
 cd "$HOME/.speakflow"
 
 echo "Updating SpeakFlow..."
+git stash 2>/dev/null || true
 git pull --quiet
 source venv/bin/activate
 pip install --quiet -r requirements.txt
@@ -21,6 +22,8 @@ if [ -f launcher.c ]; then
         PY_FWDIR="$(dirname "$(dirname "$REAL_PYTHON")")"
         if [ -f "$PY_FWDIR/Python3" ]; then
             install_name_tool -change "@executable_path/../Python3" \
+                "$PY_FWDIR/Python3" "$APP/Contents/MacOS/python3" 2>/dev/null || true
+            install_name_tool -change "@rpath/Python3.framework/Versions/3.9/Python3" \
                 "$PY_FWDIR/Python3" "$APP/Contents/MacOS/python3" 2>/dev/null || true
         fi
     fi

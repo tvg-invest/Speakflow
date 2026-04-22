@@ -1594,6 +1594,12 @@ TIPS
                     "You're on the latest version", is_success=True))
                 return
 
+            # Stash local changes (if any) before pulling
+            subprocess.run(
+                ["git", "stash"], cwd=str(install_dir),
+                capture_output=True, text=True, timeout=10,
+            )
+
             # Pull
             pull = subprocess.run(
                 ["git", "pull", "--quiet"], cwd=str(install_dir),
@@ -1625,6 +1631,7 @@ TIPS
                     if real_py and _os.path.isfile(real_py):
                         embedded = str(app_bin / "python3")
                         shutil.copy2(real_py, embedded)
+                        # Fix dylib path so embedded python finds its framework
                         fw_dir = _os.path.dirname(_os.path.dirname(real_py))
                         dylib = _os.path.join(fw_dir, "Python3")
                         if _os.path.isfile(dylib):
@@ -1633,6 +1640,13 @@ TIPS
                                  "@executable_path/../Python3", dylib, embedded],
                                 capture_output=True, timeout=10,
                             )
+                        # Also try rpath-based references
+                        subprocess.run(
+                            ["install_name_tool", "-change",
+                             "@rpath/Python3.framework/Versions/3.9/Python3",
+                             dylib, embedded],
+                            capture_output=True, timeout=10,
+                        )
                     subprocess.run(
                         ["codesign", "--force", "--deep", "--sign", "-", str(_APP_PATH)],
                         capture_output=True, timeout=30,
