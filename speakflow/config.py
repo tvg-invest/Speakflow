@@ -35,6 +35,7 @@ DEFAULTS: dict[str, Any] = {
     "personal_dictionary": [],     # custom words/names for transcription
     "active_mode": "dictation",    # dictation, ask, vision, vibecode, or custom name
     "custom_modes": [],            # list of {"name": str, "prompt": str}
+    "voice_shortcuts": [],         # list of {"trigger": str, "expansion": str}
 }
 
 
@@ -254,6 +255,14 @@ class Config:
     @custom_modes.setter
     def custom_modes(self, value: list) -> None:
         self.set("custom_modes", value)
+
+    @property
+    def voice_shortcuts(self) -> list:
+        return self._data.get("voice_shortcuts", [])
+
+    @voice_shortcuts.setter
+    def voice_shortcuts(self, value: list) -> None:
+        self.set("voice_shortcuts", value)
 
     def __repr__(self) -> str:
         safe = {k: ("***" if k == "openai_api_key" else v) for k, v in self._data.items()}

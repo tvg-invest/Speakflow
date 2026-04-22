@@ -193,8 +193,14 @@ class Transcriber:
         if self.editing_strength == "light":
             system_prompt = (
                 "You are a text cleanup assistant. Make MINIMAL changes to the "
-                "following speech transcription: fix punctuation and capitalization, "
-                "remove filler words (like 'um', 'uh', '\u00f8h', 'alts\u00e5'). "
+                "following speech transcription:\n"
+                "- Fix punctuation and capitalization.\n"
+                "- Remove ALL filler words: um, uh, like, you know, I mean, "
+                "basically, so, right, well, øh, altså, ligesom, liksom, "
+                "på en måde, jo, ikke også.\n"
+                "- Fix self-corrections/backtracking: when the speaker corrects "
+                "themselves (e.g. 'Tuesday — no wait, Wednesday' or 'tirsdag, "
+                "nej onsdag'), keep ONLY the corrected version.\n"
                 "Do NOT reword, rephrase, or restructure. Keep the exact same "
                 "language. Output ONLY the cleaned text."
                 + context_rules + surrounding_hint + dictionary_hint
@@ -202,10 +208,17 @@ class Transcriber:
         else:
             system_prompt = (
                 "You are a text cleanup assistant. Clean up the following speech "
-                "transcription. Fix punctuation, remove filler words (like 'um', "
-                "'uh', '\u00f8h', 'alts\u00e5'), fix obvious speech-to-text errors, but "
-                "preserve the original meaning and language. Keep the same language "
-                "as the input. Output ONLY the cleaned text, nothing else."
+                "transcription:\n"
+                "- Remove ALL filler words: um, uh, like, you know, I mean, "
+                "basically, so, right, well, actually, øh, altså, ligesom, "
+                "liksom, på en måde, jo, ikke også, vel.\n"
+                "- Fix self-corrections/backtracking: when the speaker corrects "
+                "themselves (e.g. 'Tuesday — no, Wednesday' or 'tirsdag, nej "
+                "onsdag'), keep ONLY the corrected version.\n"
+                "- Fix punctuation, capitalization, and obvious speech-to-text "
+                "errors.\n"
+                "Preserve the original meaning and language. Keep the same "
+                "language as the input. Output ONLY the cleaned text, nothing else."
                 + context_rules + surrounding_hint + dictionary_hint
             )
 

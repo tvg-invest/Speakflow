@@ -37,7 +37,7 @@ from .config import Config
 from . import history
 from .hotkey import HotkeyListener, is_modifier_only, _KEYCODE_MAP
 from .sounds import play_error_sound, play_start_sound, play_stop_sound, set_volume
-from .screen_capture import capture_screen_base64
+from .screen_capture import capture_screen_base64, has_screen_recording_permission
 from .text_inserter import TextInserter
 from .transcriber import Transcriber
 
@@ -169,6 +169,8 @@ class SpeakFlowUI(NSObject):
         self._response_panel = None
         self._popup_timer = None
         self._popup_response_text = ""
+        self._shortcuts_win = None
+        self._add_shortcut_win = None
 
         # Core components
         self.audio_recorder = AudioRecorder(
@@ -411,6 +413,48 @@ class SpeakFlowUI(NSObject):
         logger.warning("Could not reactivate %s before paste", self._active_app)
         return False
 
+    # ── Voice shortcuts ────────────────────────────────────────
+
+    @objc.python_method
+    def _check_voice_shortcut(self, text):
+        """Return expansion if text matches a voice shortcut trigger, else None."""
+        shortcuts = self.config.voice_shortcuts
+        if not shortcuts:
+            return None
+        normalized = text.lower().strip().rstrip(".,!?;:")
+        for sc in shortcuts:
+            trigger = sc.get("trigger", "").lower().strip().rstrip(".,!?;:")
+            if trigger and normalized == trigger:
+                return sc.get("expansion", "")
+        return None
+
+    # ── Rewrite classification ─────────────────────────────────
+
+    @objc.python_method
+    def _is_rewrite_instruction(self, text):
+        """Heuristic: does this voice instruction want to transform selected text?"""
+        t = text.lower().strip().rstrip("?.!")
+        for p in ("can you ", "could you ", "please ", "kan du ",
+                   "venligst ", "prøv at ", "ville du "):
+            if t.startswith(p):
+                t = t[len(p):]
+        rewrite_starts = (
+            "make", "change", "fix", "rewrite", "translate", "shorten",
+            "expand", "improve", "convert", "format", "summarize", "simplify",
+            "rephrase", "reword", "correct", "edit", "transform", "replace",
+            "add", "remove", "delete", "insert", "move", "swap", "merge",
+            "split", "combine", "clean", "tidy", "polish", "refine",
+            "write", "draft", "compose",
+            "gør", "ændr", "ret", "omskriv", "oversæt", "forkort",
+            "udvid", "forbedre", "konverter", "opsummer", "forenkl",
+            "tilføj", "fjern", "slet", "indsæt", "flyt", "byt",
+            "ryd op", "skriv om", "skriv det om", "skriv", "lav",
+        )
+        for kw in rewrite_starts:
+            if t.startswith(kw):
+                return True
+        return False
+
     # ── Status bar ──────────────────────────────────────────────
 
     @objc.python_method
@@ -430,6 +474,10 @@ class SpeakFlowUI(NSObject):
         menu.addItem_(mode_item)
         self._status_mode_menu = mode_sub
         self._populate_status_mode_menu()
+
+        shortcuts_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Voice Shortcuts", "manageShortcuts:", "")
+        shortcuts_item.setTarget_(self)
+        menu.addItem_(shortcuts_item)
 
         update_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Check for Updates", "checkForUpdates:", "")
         update_item.setTarget_(self)
@@ -738,9 +786,9 @@ class SpeakFlowUI(NSObject):
         y -= lt_h + 12
 
         # ── Footer ──
-        btn_w = 105
-        gap = 10
-        total = btn_w * 3 + gap * 2
+        btn_w = 96
+        gap = 8
+        total = btn_w * 4 + gap * 3
         bx = (W - total) / 2
 
         hist_btn = self._ghost_btn(v, "History",
@@ -748,13 +796,18 @@ class SpeakFlowUI(NSObject):
         hist_btn.setTarget_(self)
         hist_btn.setAction_("showHistory:")
 
+        sc_btn = self._ghost_btn(v, "Shortcuts",
+                                 bx + btn_w + gap, y - 4, btn_w, 26)
+        sc_btn.setTarget_(self)
+        sc_btn.setAction_("manageShortcuts:")
+
         help_btn = self._ghost_btn(v, "Help & Guide",
-                                   bx + btn_w + gap, y - 4, btn_w, 26)
+                                   bx + (btn_w + gap) * 2, y - 4, btn_w, 26)
         help_btn.setTarget_(self)
         help_btn.setAction_("showGuide:")
 
         self._update_btn = self._ghost_btn(v, "Update",
-                                          bx + (btn_w + gap) * 2, y - 4, btn_w, 26)
+                                          bx + (btn_w + gap) * 3, y - 4, btn_w, 26)
         self._update_btn.setTarget_(self)
         self._update_btn.setAction_("checkForUpdates:")
         y -= 30
@@ -1561,6 +1614,152 @@ TIPS
             self._build_mode_manager()
             logger.info("Custom mode deleted: %s", deleted)
 
+    # ── Voice shortcuts management ────────────────────────────
+
+    def manageShortcuts_(self, sender):
+        self._build_shortcuts_manager()
+
+    @objc.python_method
+    def _build_shortcuts_manager(self):
+        w, h = 420, 400
+        if self._shortcuts_win is None:
+            screen = NSScreen.mainScreen().frame()
+            self._shortcuts_win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+                NSMakeRect((screen.size.width - w) / 2, (screen.size.height - h) / 2, w, h),
+                1 | 2 | 4 | 8, NSBackingStoreBuffered, False)
+            self._shortcuts_win.setTitle_("Voice Shortcuts")
+            self._shortcuts_win.setBackgroundColor_(_BG())
+            self._shortcuts_win.setReleasedWhenClosed_(False)
+            self._shortcuts_win.setTitlebarAppearsTransparent_(True)
+            self._shortcuts_win.setTitleVisibility_(1)
+        cv = self._shortcuts_win.contentView()
+        for sub in list(cv.subviews()):
+            sub.removeFromSuperview()
+
+        self._label(cv, "Voice Shortcuts", 20, h - 48, 200, 24,
+                    NSFont.systemFontOfSize_weight_(16, NSFontWeightSemibold), _WHITE())
+        add_btn = self._styled_btn(cv, "Add New", w - 140, h - 48, 110, 30, color=_ACCENT())
+        add_btn.setTarget_(self)
+        add_btn.setAction_("addShortcut:")
+
+        shortcuts = self.config.voice_shortcuts
+        y_pos = h - 90
+        if not shortcuts:
+            self._label(cv, "No shortcuts yet. Say a trigger phrase and SpeakFlow\n"
+                        "will expand it to the full text automatically.",
+                        20, y_pos - 30, w - 40, 44, NSFont.systemFontOfSize_(13), _DIM())
+        else:
+            for i, sc in enumerate(shortcuts):
+                mc = self._card(cv, 16, y_pos - 66, w - 32, 62)
+                self._label(mc, sc["trigger"], 16, 30, 220, 24,
+                            NSFont.systemFontOfSize_weight_(14, NSFontWeightSemibold), _WHITE())
+                preview = sc["expansion"][:60] + ("..." if len(sc["expansion"]) > 60 else "")
+                self._label(mc, preview, 16, 8, w - 130, 20,
+                            NSFont.systemFontOfSize_(11), _DIM())
+                del_btn = self._ghost_btn(mc, "Delete", w - 32 - 84, 18, 64, 26)
+                del_btn.setTag_(i)
+                del_btn.setTarget_(self)
+                del_btn.setAction_("deleteShortcut:")
+                y_pos -= 74
+
+        self._shortcuts_win.makeKeyAndOrderFront_(None)
+        NSApp.activateIgnoringOtherApps_(True)
+
+    def addShortcut_(self, sender):
+        w, h = 400, 240
+        if self._add_shortcut_win is None:
+            screen = NSScreen.mainScreen().frame()
+            self._add_shortcut_win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+                NSMakeRect((screen.size.width - w) / 2, (screen.size.height - h) / 2, w, h),
+                1 | 2 | 4, NSBackingStoreBuffered, False)
+            self._add_shortcut_win.setTitle_("Add Voice Shortcut")
+            self._add_shortcut_win.setBackgroundColor_(_BG())
+            self._add_shortcut_win.setReleasedWhenClosed_(False)
+            self._add_shortcut_win.setTitlebarAppearsTransparent_(True)
+            self._add_shortcut_win.setTitleVisibility_(1)
+        cv = self._add_shortcut_win.contentView()
+        for sub in list(cv.subviews()):
+            sub.removeFromSuperview()
+
+        self._label(cv, "Trigger Phrase", 20, h - 54, 200, 24,
+                    NSFont.systemFontOfSize_(13), _DIM())
+        self._shortcut_trigger_field = NSTextField.alloc().initWithFrame_(
+            NSMakeRect(20, h - 82, w - 40, 28))
+        self._shortcut_trigger_field.setPlaceholderString_("e.g., book meeting")
+        self._shortcut_trigger_field.setFont_(NSFont.systemFontOfSize_(13))
+        self._shortcut_trigger_field.setTextColor_(_WHITE())
+        self._shortcut_trigger_field.setDrawsBackground_(False)
+        self._shortcut_trigger_field.setBezeled_(False)
+        self._shortcut_trigger_field.setWantsLayer_(True)
+        self._shortcut_trigger_field.layer().setCornerRadius_(6)
+        self._shortcut_trigger_field.layer().setBackgroundColor_(
+            NSColor.colorWithCalibratedRed_green_blue_alpha_(0.12, 0.12, 0.16, 1.0).CGColor())
+        self._shortcut_trigger_field.layer().setBorderWidth_(1)
+        self._shortcut_trigger_field.layer().setBorderColor_(_SEC_EDGE().CGColor())
+        cv.addSubview_(self._shortcut_trigger_field)
+
+        self._label(cv, "Expands To", 20, h - 112, 200, 24,
+                    NSFont.systemFontOfSize_(13), _DIM())
+        self._shortcut_expansion_field = NSTextField.alloc().initWithFrame_(
+            NSMakeRect(20, 60, w - 40, h - 130))
+        self._shortcut_expansion_field.setPlaceholderString_(
+            "e.g., Book a meeting: https://cal.com/me/30min")
+        self._shortcut_expansion_field.setFont_(NSFont.systemFontOfSize_(13))
+        self._shortcut_expansion_field.setTextColor_(_WHITE())
+        self._shortcut_expansion_field.setDrawsBackground_(False)
+        self._shortcut_expansion_field.setBezeled_(False)
+        self._shortcut_expansion_field.setWantsLayer_(True)
+        self._shortcut_expansion_field.layer().setCornerRadius_(6)
+        self._shortcut_expansion_field.layer().setBackgroundColor_(
+            NSColor.colorWithCalibratedRed_green_blue_alpha_(0.12, 0.12, 0.16, 1.0).CGColor())
+        self._shortcut_expansion_field.layer().setBorderWidth_(1)
+        self._shortcut_expansion_field.layer().setBorderColor_(_SEC_EDGE().CGColor())
+        cv.addSubview_(self._shortcut_expansion_field)
+
+        cancel_btn = self._ghost_btn(cv, "Cancel", w - 210, 18, 90, 32)
+        cancel_btn.setTarget_(self)
+        cancel_btn.setAction_("cancelAddShortcut:")
+        save_btn = self._styled_btn(cv, "Save", w - 110, 18, 90, 32, color=_GREEN())
+        save_btn.setTarget_(self)
+        save_btn.setAction_("saveShortcut:")
+
+        self._add_shortcut_win.makeKeyAndOrderFront_(None)
+        NSApp.activateIgnoringOtherApps_(True)
+
+    def cancelAddShortcut_(self, sender):
+        self._add_shortcut_win.close()
+
+    def saveShortcut_(self, sender):
+        trigger = self._shortcut_trigger_field.stringValue().strip()
+        expansion = self._shortcut_expansion_field.stringValue().strip()
+        if not trigger or not expansion:
+            return
+        shortcuts = list(self.config.voice_shortcuts)
+        for sc in shortcuts:
+            if sc["trigger"].lower() == trigger.lower():
+                sc["expansion"] = expansion
+                self.config.voice_shortcuts = shortcuts
+                self._add_shortcut_win.close()
+                if self._shortcuts_win is not None and self._shortcuts_win.isVisible():
+                    self._build_shortcuts_manager()
+                return
+        shortcuts.append({"trigger": trigger, "expansion": expansion})
+        self.config.voice_shortcuts = shortcuts
+        self._add_shortcut_win.close()
+        if self._shortcuts_win is not None and self._shortcuts_win.isVisible():
+            self._build_shortcuts_manager()
+        logger.info("Voice shortcut added: %s", trigger)
+
+    def deleteShortcut_(self, sender):
+        idx = sender.tag()
+        shortcuts = list(self.config.voice_shortcuts)
+        if 0 <= idx < len(shortcuts):
+            deleted = shortcuts[idx]["trigger"]
+            shortcuts.pop(idx)
+            self.config.voice_shortcuts = shortcuts
+            self._build_shortcuts_manager()
+            logger.info("Voice shortcut deleted: %s", deleted)
+
     @objc.python_method
     def _set_auto_start(self, enabled):
         if enabled:
@@ -1762,7 +1961,8 @@ TIPS
                         "Screen capture failed — grant Screen Recording permission"))
                     return
             elif mode == "auto":
-                self._screenshot_b64 = capture_screen_base64()
+                if has_screen_recording_permission():
+                    self._screenshot_b64 = capture_screen_base64()
 
             # Context mode activates in dictation and auto
             if mode in ("dictation", "auto"):
@@ -1988,14 +2188,27 @@ TIPS
                 self._run_on_main(lambda: self._ui_error("No response generated."))
                 return
 
-            self._run_on_main_sync(lambda: self._set_clipboard(response))
-            logger.info("Context response copied: %d chars.", len(response))
+            is_rewrite = self._is_rewrite_instruction(voice_text)
+            if is_rewrite and not self._float_triggered:
+                reactivated = self._reactivate_target_app()
+                if reactivated:
+                    _time.sleep(0.15)
+                    self.text_inserter.insert_text(response)
+                    logger.info("Context rewrite: replaced selection with %d chars.", len(response))
+                    self._run_on_main(lambda: self._ui_done(response))
+                else:
+                    self._run_on_main_sync(lambda: self._set_clipboard(response))
+                    self._run_on_main(lambda: self._ui_done_clipboard(response))
+            else:
+                self._run_on_main_sync(lambda: self._set_clipboard(response))
+                logger.info("Context response copied: %d chars.", len(response))
+                self._run_on_main(lambda: self._ui_ai_response(response))
+
             history.add(
                 f"[Context] {voice_text}\n→ {response}",
                 app_name=self._active_app,
                 language=self.config.language,
             )
-            self._run_on_main(lambda: self._ui_ai_response(response))
         except RuntimeError as exc:
             logger.error("Context query failed: %s", exc)
             msg = str(exc)
@@ -2069,7 +2282,13 @@ TIPS
         if not text or not text.strip():
             self._run_on_main(lambda: self._ui_error("No speech detected."))
             return
-        logger.info("Transcription: %d chars.", len(text))
+
+        expansion = self._check_voice_shortcut(text)
+        if expansion is not None:
+            text = expansion
+            logger.info("Voice shortcut matched: %d chars.", len(text))
+        else:
+            logger.info("Transcription: %d chars.", len(text))
 
         if self._float_triggered:
             self._run_on_main_sync(lambda: self._set_clipboard(text))
@@ -2150,13 +2369,35 @@ TIPS
             self._run_on_main(lambda: self._ui_error("No speech detected."))
             return
 
+        # Check voice shortcuts before classifying intent
+        expansion = self._check_voice_shortcut(raw)
+        if expansion is not None:
+            text = expansion
+            logger.info("Auto→shortcut: %d chars.", len(text))
+            if self._float_triggered:
+                self._run_on_main_sync(lambda: self._set_clipboard(text))
+                self._run_on_main(lambda: self._ui_done_clipboard(text))
+            else:
+                reactivated = self._reactivate_target_app()
+                if reactivated:
+                    _time.sleep(0.15)
+                    self.text_inserter.insert_text(text)
+                    self._run_on_main(lambda: self._ui_done(text))
+                else:
+                    self._run_on_main_sync(lambda: self._set_clipboard(text))
+                    self._run_on_main(lambda: self._ui_done_clipboard(text))
+            try:
+                history.add(text, app_name=self._active_app, language=self.config.language)
+            except Exception:
+                logger.warning("Failed to save history", exc_info=True)
+            return
+
         app_ctx = (self._active_app or "") if self.config.context_cleanup else ""
         intent = self.transcriber.classify_intent(
             raw, app_context=app_ctx, language=self.config.language)
         logger.info("Auto classified '%s...' → %s", raw[:40], intent)
 
         if intent == "dictation":
-            # Run cleanup on the raw text instead of re-transcribing
             if self.transcriber.editing_strength != "off":
                 try:
                     text = self.transcriber.cleanup_text(
