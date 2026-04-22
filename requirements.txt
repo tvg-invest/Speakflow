@@ -1,5 +1,4 @@
 sounddevice
 numpy
 openai
-pynput
 pyobjc

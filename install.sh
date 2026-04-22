@@ -88,12 +88,11 @@ if [ -f "$REAL_PYTHON" ]; then
     if [ -f "$PY_FWDIR/Python3" ]; then
         install_name_tool -change "@executable_path/../Python3" \
             "$PY_FWDIR/Python3" "$APP_DIR/Contents/MacOS/python3" 2>/dev/null || true
+        install_name_tool -change "@rpath/Python3.framework/Versions/3.9/Python3" \
+            "$PY_FWDIR/Python3" "$APP_DIR/Contents/MacOS/python3" 2>/dev/null || true
     fi
     echo "  Embedded Python binary into .app bundle."
 fi
-
-# Ad-hoc code sign so macOS Accessibility trust persists across restarts.
-codesign --force --deep --sign - "$APP_DIR" 2>/dev/null || true
 
 cat > "$APP_DIR/Contents/Info.plist" << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -125,6 +124,9 @@ cat > "$APP_DIR/Contents/Info.plist" << 'EOF'
 EOF
 
 cp SpeakFlow.icns "$APP_DIR/Contents/Resources/SpeakFlow.icns" 2>/dev/null || true
+
+# Ad-hoc code sign so macOS Accessibility trust persists across restarts.
+codesign --force --deep --sign - "$APP_DIR" 2>/dev/null || true
 
 # ── API key ───────────────────────────────────────────────
 echo "  [5/5] Checking configuration..."

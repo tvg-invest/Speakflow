@@ -335,21 +335,51 @@ class Transcriber:
         except openai.APIError as exc:
             raise RuntimeError(f"Context query failed: {exc}") from exc
 
-    def classify_intent(self, text: str) -> str:
+    def classify_intent(self, text: str, app_context: str = "",
+                        language: str = "") -> str:
         """Classify voice input intent for auto-mode routing.
 
         Returns one of: ``"dictation"``, ``"ask"``, ``"vision"``, ``"vibecode"``.
         Falls back to ``"dictation"`` on any error.
         """
+        app_hint = ""
+        if app_context:
+            app_hint = f"\nThe user is currently in: {app_context}"
+        if language and language != "auto":
+            lang_names = {"da": "Danish", "en": "English", "de": "German",
+                          "fr": "French", "es": "Spanish", "sv": "Swedish",
+                          "nb": "Norwegian", "nl": "Dutch"}
+            lang_name = lang_names.get(language, language)
+            app_hint += f"\nThe user's language is: {lang_name}"
+
         system_prompt = (
-            "Classify this voice input into exactly one category:\n"
-            "- \"dictation\" — the user is dictating text to be typed as-is\n"
-            "- \"ask\" — the user is asking a question or requesting information\n"
-            "- \"vision\" — the user is asking about something visible on their "
-            "screen (mentions screen, what they see, errors shown, UI elements, etc.)\n"
-            "- \"vibecode\" — the user is describing software to build, code to "
-            "write, or technical changes to implement\n\n"
-            "Output ONLY the category name. Nothing else."
+            "You are classifying a voice transcription to decide how to handle it.\n"
+            "The user is using a voice-to-text app. MOST voice input is dictation — "
+            "text the user wants typed into their current app.\n\n"
+            "CRITICAL RULE: Only classify as something other than \"dictation\" if "
+            "the user is clearly talking TO an AI assistant, not composing text to "
+            "be typed. Questions that are part of a message (e.g. \"Can you send me "
+            "the report?\", \"Hvornår er mødet?\") are DICTATION — the user is "
+            "writing a message, not asking the AI.\n\n"
+            "Signals that it IS dictation (type as-is):\n"
+            "- Conversational text, messages, emails, notes, comments\n"
+            "- Sentences addressed to another person (\"Hi John\", \"Hej, kan du...\")\n"
+            "- Any text the user would normally type themselves\n"
+            "- Short replies, acknowledgements, or casual speech\n\n"
+            "Signals that it is NOT dictation:\n"
+            "- Explicitly asks the AI for help: \"what is\", \"explain\", \"how do I\", "
+            "\"fortæl mig om\", \"hvad betyder\"\n"
+            "- References the screen: \"what's on my screen\", \"this error\", "
+            "\"hvad ser jeg her\"\n"
+            "- Describes code to build: \"create a function that\", \"build a website\", "
+            "\"lav en app der\"\n\n"
+            "Categories:\n"
+            "- \"dictation\" — text to type as-is (DEFAULT when uncertain)\n"
+            "- \"ask\" — question directed at the AI for an answer\n"
+            "- \"vision\" — asking about something visible on screen\n"
+            "- \"vibecode\" — describing software/code to build\n"
+            + app_hint
+            + "\n\nOutput ONLY the category name. Nothing else."
         )
         try:
             logger.debug("Classifying intent for auto mode")

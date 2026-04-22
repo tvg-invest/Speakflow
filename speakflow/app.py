@@ -425,15 +425,11 @@ class SpeakFlowUI(NSObject):
 
         # Mode submenu
         mode_sub = NSMenu.alloc().init()
-        for mode_id in _BUILTIN_MODES:
-            item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-                _MODE_NAMES[mode_id], "statusBarModeSelected:", "")
-            item.setTarget_(self)
-            mode_sub.addItem_(item)
         mode_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Mode", None, "")
         mode_item.setSubmenu_(mode_sub)
         menu.addItem_(mode_item)
         self._status_mode_menu = mode_sub
+        self._populate_status_mode_menu()
 
         update_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Check for Updates", "checkForUpdates:", "")
         update_item.setTarget_(self)
@@ -937,12 +933,16 @@ class SpeakFlowUI(NSObject):
         scroll.setBorderType_(0)
         scroll.setBackgroundColor_(_BG())
 
-        tv = NSTextView.alloc().initWithFrame_(NSMakeRect(0, 0, w - 20, 900))
+        tv = NSTextView.alloc().initWithFrame_(NSMakeRect(0, 0, w - 20, h))
         tv.setEditable_(False)
         tv.setSelectable_(True)
         tv.setBackgroundColor_(_BG())
         tv.setTextColor_(_WHITE())
         tv.setFont_(NSFont.systemFontOfSize_(13))
+        tv.setVerticallyResizable_(True)
+        tv.setHorizontallyResizable_(False)
+        tv.textContainer().setContainerSize_((w - 20, 1e7))
+        tv.textContainer().setWidthTracksTextView_(True)
 
         hotkey_str = self.config.hotkey
         if is_modifier_only(hotkey_str):
@@ -1075,6 +1075,10 @@ TIPS
         tv.setBackgroundColor_(_BG())
         tv.setTextColor_(_WHITE())
         tv.setFont_(NSFont.systemFontOfSize_(12))
+        tv.setVerticallyResizable_(True)
+        tv.setHorizontallyResizable_(False)
+        tv.textContainer().setContainerSize_((w - 20, 1e7))
+        tv.textContainer().setWidthTracksTextView_(True)
 
         if not entries:
             tv.setString_("No transcriptions yet.")
@@ -1308,6 +1312,28 @@ TIPS
             self.mode_popup.selectItemWithTitle_(current)
 
     @objc.python_method
+    def _populate_status_mode_menu(self):
+        self._status_mode_menu.removeAllItems()
+        current = self.config.active_mode
+        for mode_id in _BUILTIN_MODES:
+            item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+                _MODE_NAMES[mode_id], "statusBarModeSelected:", "")
+            item.setTarget_(self)
+            if current == mode_id:
+                item.setState_(1)
+            self._status_mode_menu.addItem_(item)
+        custom = self.config.custom_modes
+        if custom:
+            self._status_mode_menu.addItem_(NSMenuItem.separatorItem())
+            for cm in custom:
+                item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+                    cm["name"], "statusBarModeSelected:", "")
+                item.setTarget_(self)
+                if current == cm["name"]:
+                    item.setState_(1)
+                self._status_mode_menu.addItem_(item)
+
+    @objc.python_method
     def _populate_float_menu(self):
         self._float_menu.removeAllItems()
         for mode_id in _BUILTIN_MODES:
@@ -1341,6 +1367,7 @@ TIPS
         mode_id = _MODE_IDS.get(title)
         self.config.active_mode = mode_id if mode_id else title
         self._populate_float_menu()
+        self._populate_status_mode_menu()
         self._update_mode_idle_color()
         logger.info("Mode changed to: %s", self.config.active_mode)
 
@@ -1349,6 +1376,7 @@ TIPS
         mode_id = _MODE_IDS.get(title)
         self.config.active_mode = mode_id if mode_id else title
         self._populate_float_menu()
+        self._populate_status_mode_menu()
         self._populate_mode_popup()
         current = self.config.active_mode
         if current in _MODE_NAMES:
@@ -1363,6 +1391,7 @@ TIPS
         mode_id = _MODE_IDS.get(title)
         self.config.active_mode = mode_id if mode_id else title
         self._populate_float_menu()
+        self._populate_status_mode_menu()
         self._populate_mode_popup()
         current = self.config.active_mode
         if current in _MODE_NAMES:
@@ -1499,6 +1528,7 @@ TIPS
                 self.config.custom_modes = modes
                 self._populate_mode_popup()
                 self._populate_float_menu()
+                self._populate_status_mode_menu()
                 self._add_mode_win.close()
                 return
         modes.append({"name": name, "prompt": prompt})
@@ -1507,6 +1537,7 @@ TIPS
         self._populate_mode_popup()
         self.mode_popup.selectItemWithTitle_(name)
         self._populate_float_menu()
+        self._populate_status_mode_menu()
         self._update_mode_idle_color()
         self._add_mode_win.close()
         if self._mode_mgr_win is not None and self._mode_mgr_win.isVisible():
@@ -1522,6 +1553,7 @@ TIPS
             self.config.custom_modes = modes
             self._populate_mode_popup()
             self._populate_float_menu()
+            self._populate_status_mode_menu()
             if self.config.active_mode == deleted:
                 self.config.active_mode = "dictation"
                 self.mode_popup.selectItemWithTitle_("Dictation")
@@ -1640,13 +1672,12 @@ TIPS
                                  "@executable_path/../Python3", dylib, embedded],
                                 capture_output=True, timeout=10,
                             )
-                        # Also try rpath-based references
-                        subprocess.run(
-                            ["install_name_tool", "-change",
-                             "@rpath/Python3.framework/Versions/3.9/Python3",
-                             dylib, embedded],
-                            capture_output=True, timeout=10,
-                        )
+                            subprocess.run(
+                                ["install_name_tool", "-change",
+                                 "@rpath/Python3.framework/Versions/3.9/Python3",
+                                 dylib, embedded],
+                                capture_output=True, timeout=10,
+                            )
                     subprocess.run(
                         ["codesign", "--force", "--deep", "--sign", "-", str(_APP_PATH)],
                         capture_output=True, timeout=30,
@@ -1933,6 +1964,7 @@ TIPS
             logger.warning("Context stop: %s", traceback.format_exc().splitlines()[-1])
             self._processing = False
             self._context_mode = False
+            self._float_triggered = False
             self._run_on_main(self._ui_ready)
 
     @objc.python_method
@@ -2118,13 +2150,14 @@ TIPS
             self._run_on_main(lambda: self._ui_error("No speech detected."))
             return
 
-        intent = self.transcriber.classify_intent(raw)
+        app_ctx = (self._active_app or "") if self.config.context_cleanup else ""
+        intent = self.transcriber.classify_intent(
+            raw, app_context=app_ctx, language=self.config.language)
         logger.info("Auto classified '%s...' → %s", raw[:40], intent)
 
         if intent == "dictation":
             # Run cleanup on the raw text instead of re-transcribing
             if self.transcriber.editing_strength != "off":
-                app_ctx = (self._active_app or "") if self.config.context_cleanup else ""
                 try:
                     text = self.transcriber.cleanup_text(
                         raw, self.transcriber.language, app_ctx,
@@ -2155,7 +2188,6 @@ TIPS
         else:
             # AI mode — route to the right handler
             self._run_on_main(self._ui_mode_thinking)
-            app_ctx = (self._active_app or "") if self.config.context_cleanup else ""
             if intent == "ask":
                 response = self.transcriber.ask_question(
                     raw, model=self.config.context_model, app_context=app_ctx)
@@ -2165,6 +2197,11 @@ TIPS
                     self._screenshot_b64, raw,
                     model=self.config.context_model, app_context=app_ctx)
                 label = "Vision"
+            elif intent == "vision":
+                logger.warning("Auto→vision but no screenshot, falling back to ask")
+                response = self.transcriber.ask_question(
+                    raw, model=self.config.context_model, app_context=app_ctx)
+                label = "AI Ask"
             elif intent == "vibecode":
                 response = self.transcriber.vibecode_prompt(
                     raw, model=self.config.context_model)
@@ -2252,28 +2289,6 @@ TIPS
         self.rec_button.setEnabled_(False)
         self.status_item.setTitle_("...")
 
-    @objc.python_method
-    def _ui_context_done(self, response):
-        self.status_label.setStringValue_("Copied to clipboard")
-        self.status_label.setTextColor_(_GREEN())
-        self._status_dot.layer().setBackgroundColor_(_GREEN().CGColor())
-        self._set_btn_title(self.rec_button, "Start Recording")
-        self.rec_button.layer().setBackgroundColor_(_GREEN().CGColor())
-        self.rec_button.setEnabled_(True)
-        self.status_item.setTitle_("SF")
-        self._float_mode = None
-        if self._level_timer is not None:
-            self._level_timer.invalidate()
-            self._level_timer = None
-        self._set_float_color(_GREEN())
-        self._last_text_label.setStringValue_(response)
-
-        def _auto_clear():
-            if not self._recording and not self._processing:
-                self._run_on_main(self._ui_ready)
-
-        threading.Timer(2.5, _auto_clear).start()
-
     # ── Response popup ──────────────────────────────────────────
 
     @objc.python_method
@@ -2356,29 +2371,38 @@ TIPS
         close_btn.setAction_("popupClose:")
         blur.addSubview_(close_btn)
 
-        # Response text (use attributed string to force white on vibrancy)
+        cv.addSubview_(blur)
+
+        # Response text — NSTextView+NSScrollView on cv (not blur) with
+        # opaque bg.  Placing on cv avoids vibrancy compositing that made
+        # text invisible when inside the blur view.
+        text_bg = NSColor.colorWithCalibratedRed_green_blue_alpha_(0.13, 0.13, 0.16, 1.0)
+        text_fg = NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 1.0, 1.0, 1.0)
         scroll = NSScrollView.alloc().initWithFrame_(
             NSMakeRect(12, pad_bottom, pw - 24, text_h))
         scroll.setHasVerticalScroller_(True)
         scroll.setAutohidesScrollers_(True)
         scroll.setBorderType_(0)
-        scroll.setDrawsBackground_(False)
+        scroll.setDrawsBackground_(True)
+        scroll.setBackgroundColor_(text_bg)
+        scroll.setWantsLayer_(True)
+        scroll.layer().setCornerRadius_(8)
+        scroll.layer().setMasksToBounds_(True)
         tv = NSTextView.alloc().initWithFrame_(
             NSMakeRect(0, 0, pw - 24, text_h))
         tv.setEditable_(False)
         tv.setSelectable_(True)
-        tv.setBackgroundColor_(NSColor.clearColor())
-        tv.setDrawsBackground_(False)
-        attr_text = NSAttributedString.alloc().initWithString_attributes_(
-            text, {
-                NSFontAttributeName: NSFont.systemFontOfSize_(13.5),
-                NSForegroundColorAttributeName: _WHITE(),
-            })
-        tv.textStorage().setAttributedString_(attr_text)
+        tv.setDrawsBackground_(True)
+        tv.setBackgroundColor_(text_bg)
+        tv.setTextColor_(text_fg)
+        tv.setFont_(NSFont.systemFontOfSize_(13.5))
+        tv.setVerticallyResizable_(True)
+        tv.setHorizontallyResizable_(False)
+        tv.textContainer().setContainerSize_((pw - 24, 1e7))
+        tv.textContainer().setWidthTracksTextView_(True)
+        tv.setString_(text)
         scroll.setDocumentView_(tv)
-        blur.addSubview_(scroll)
-
-        cv.addSubview_(blur)
+        cv.addSubview_(scroll)
         self._response_panel.orderFront_(None)
         self._popup_response_text = text
 
