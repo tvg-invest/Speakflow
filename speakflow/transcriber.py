@@ -335,6 +335,45 @@ class Transcriber:
         except openai.APIError as exc:
             raise RuntimeError(f"Context query failed: {exc}") from exc
 
+    def classify_intent(self, text: str) -> str:
+        """Classify voice input intent for auto-mode routing.
+
+        Returns one of: ``"dictation"``, ``"ask"``, ``"vision"``, ``"vibecode"``.
+        Falls back to ``"dictation"`` on any error.
+        """
+        system_prompt = (
+            "Classify this voice input into exactly one category:\n"
+            "- \"dictation\" — the user is dictating text to be typed as-is\n"
+            "- \"ask\" — the user is asking a question or requesting information\n"
+            "- \"vision\" — the user is asking about something visible on their "
+            "screen (mentions screen, what they see, errors shown, UI elements, etc.)\n"
+            "- \"vibecode\" — the user is describing software to build, code to "
+            "write, or technical changes to implement\n\n"
+            "Output ONLY the category name. Nothing else."
+        )
+        try:
+            logger.debug("Classifying intent for auto mode")
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": text},
+                ],
+                max_tokens=10,
+                timeout=10,
+            )
+            if not response.choices:
+                return "dictation"
+            result = response.choices[0].message.content.strip().lower().strip('"')
+            if result in ("dictation", "ask", "vision", "vibecode"):
+                logger.info("Auto mode classified as: %s", result)
+                return result
+            return "dictation"
+        except Exception:
+            logger.warning("Intent classification failed, defaulting to dictation",
+                           exc_info=True)
+            return "dictation"
+
     def ask_question(self, question: str, model: str = "gpt-4o",
                      app_context: str = "") -> str:
         """Send a voice-transcribed question to GPT and return the answer."""

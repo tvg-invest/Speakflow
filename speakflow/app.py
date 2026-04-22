@@ -66,8 +66,9 @@ _SEC_EDGE  = lambda: NSColor.colorWithCalibratedRed_green_blue_alpha_(0.30, 0.30
 _TEAL      = lambda: NSColor.colorWithCalibratedRed_green_blue_alpha_(0.25, 0.78, 0.85, 1.0)
 
 # ── Mode system ────────────────────────────────────────────────
-_BUILTIN_MODES = ["dictation", "ask", "vision", "vibecode"]
+_BUILTIN_MODES = ["auto", "dictation", "ask", "vision", "vibecode"]
 _MODE_NAMES = {
+    "auto": "Auto",
     "dictation": "Dictation",
     "ask": "AI Ask",
     "vision": "Screen Vision",
@@ -75,6 +76,7 @@ _MODE_NAMES = {
 }
 _MODE_IDS = {v: k for k, v in _MODE_NAMES.items()}
 _MODE_COLORS = {
+    "auto": _WHITE,
     "dictation": _ACCENT,
     "ask": _TEAL,
     "vision": _GOLD,
@@ -164,6 +166,9 @@ class SpeakFlowUI(NSObject):
         self._screenshot_b64 = ""
         self._mode_mgr_win = None
         self._add_mode_win = None
+        self._response_panel = None
+        self._popup_timer = None
+        self._popup_response_text = ""
 
         # Core components
         self.audio_recorder = AudioRecorder(
@@ -1702,7 +1707,7 @@ TIPS
         self._screenshot_b64 = ""
 
         if not self._float_triggered:
-            # Vision: capture screen before recording
+            # Vision / Auto: capture screen before recording
             if mode == "vision":
                 self._screenshot_b64 = capture_screen_base64()
                 if not self._screenshot_b64:
@@ -1711,9 +1716,11 @@ TIPS
                     self._run_on_main(lambda: self._ui_error(
                         "Screen capture failed — grant Screen Recording permission"))
                     return
+            elif mode == "auto":
+                self._screenshot_b64 = capture_screen_base64()
 
-            # Context mode only activates in dictation
-            if mode == "dictation":
+            # Context mode activates in dictation and auto
+            if mode in ("dictation", "auto"):
                 sel = self._run_on_main_sync(self._grab_selection)
                 if sel and sel.strip():
                     self._selected_text = sel
@@ -1942,7 +1949,7 @@ TIPS
                 app_name=self._active_app,
                 language=self.config.language,
             )
-            self._run_on_main(lambda: self._ui_context_done(response))
+            self._run_on_main(lambda: self._ui_ai_response(response))
         except RuntimeError as exc:
             logger.error("Context query failed: %s", exc)
             msg = str(exc)
@@ -1989,6 +1996,8 @@ TIPS
         try:
             if mode == "dictation":
                 self._process_dictation(audio_data)
+            elif mode == "auto":
+                self._process_auto_mode(audio_data)
             else:
                 self._process_ai_mode(audio_data, mode)
         except RuntimeError as exc:
@@ -2085,7 +2094,78 @@ TIPS
         self._run_on_main_sync(lambda: self._set_clipboard(response))
         history.add(f"[{label}] {raw}\n→ {response}",
                     app_name=self._active_app, language=self.config.language)
-        self._run_on_main(lambda: self._ui_done_clipboard(response))
+        self._run_on_main(lambda: self._ui_ai_response(response))
+
+    @objc.python_method
+    def _process_auto_mode(self, audio_data):
+        """Auto mode: classify intent then route."""
+        raw = self.transcriber.transcribe(audio_data, skip_cleanup=True)
+        if not raw or not raw.strip():
+            self._run_on_main(lambda: self._ui_error("No speech detected."))
+            return
+
+        intent = self.transcriber.classify_intent(raw)
+        logger.info("Auto classified '%s...' → %s", raw[:40], intent)
+
+        if intent == "dictation":
+            # Run cleanup on the raw text instead of re-transcribing
+            if self.transcriber.editing_strength != "off":
+                app_ctx = (self._active_app or "") if self.config.context_cleanup else ""
+                try:
+                    text = self.transcriber.cleanup_text(
+                        raw, self.transcriber.language, app_ctx,
+                        self._before_text, self._after_text)
+                except Exception:
+                    text = raw
+            else:
+                text = raw
+            if not text or not text.strip():
+                text = raw
+            logger.info("Auto→dictation: %d chars.", len(text))
+            if self._float_triggered:
+                self._run_on_main_sync(lambda: self._set_clipboard(text))
+                self._run_on_main(lambda: self._ui_done_clipboard(text))
+            else:
+                reactivated = self._reactivate_target_app()
+                if reactivated:
+                    _time.sleep(0.15)
+                    self.text_inserter.insert_text(text)
+                    self._run_on_main(lambda: self._ui_done(text))
+                else:
+                    self._run_on_main_sync(lambda: self._set_clipboard(text))
+                    self._run_on_main(lambda: self._ui_done_clipboard(text))
+            try:
+                history.add(text, app_name=self._active_app, language=self.config.language)
+            except Exception:
+                logger.warning("Failed to save history", exc_info=True)
+        else:
+            # AI mode — route to the right handler
+            self._run_on_main(self._ui_mode_thinking)
+            app_ctx = (self._active_app or "") if self.config.context_cleanup else ""
+            if intent == "ask":
+                response = self.transcriber.ask_question(
+                    raw, model=self.config.context_model, app_context=app_ctx)
+                label = "AI Ask"
+            elif intent == "vision" and self._screenshot_b64:
+                response = self.transcriber.vision_query(
+                    self._screenshot_b64, raw,
+                    model=self.config.context_model, app_context=app_ctx)
+                label = "Vision"
+            elif intent == "vibecode":
+                response = self.transcriber.vibecode_prompt(
+                    raw, model=self.config.context_model)
+                label = "VibeCode"
+            else:
+                response = self.transcriber.ask_question(
+                    raw, model=self.config.context_model, app_context=app_ctx)
+                label = "AI Ask"
+            if not response or not response.strip():
+                self._run_on_main(lambda: self._ui_error("No response generated."))
+                return
+            self._run_on_main_sync(lambda: self._set_clipboard(response))
+            history.add(f"[{label}] {raw}\n→ {response}",
+                        app_name=self._active_app, language=self.config.language)
+            self._run_on_main(lambda: self._ui_ai_response(response))
 
     # ── UI state updates ────────────────────────────────────────
 
@@ -2180,10 +2260,161 @@ TIPS
 
         threading.Timer(2.5, _auto_clear).start()
 
+    # ── Response popup ──────────────────────────────────────────
+
+    @objc.python_method
+    def _show_response_popup(self, text):
+        """Show a floating frosted-glass popup with the AI response."""
+        pw = 340
+        line_h = 18
+        chars_per_line = 42
+        est_lines = 0
+        for para in text.split('\n'):
+            est_lines += max(1, (len(para) + chars_per_line - 1) // chars_per_line)
+        text_h = min(350, max(30, est_lines * line_h + 8))
+        header_h = 36
+        pad_bottom = 14
+        ph = header_h + text_h + pad_bottom
+
+        screen = NSScreen.mainScreen()
+        visible = screen.visibleFrame()
+        x = visible.origin.x + visible.size.width - pw - 16
+        y = visible.origin.y + visible.size.height - ph - 8
+
+        if self._response_panel is None:
+            self._response_panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
+                NSMakeRect(x, y, pw, ph), 1 << 7, NSBackingStoreBuffered, False)
+            self._response_panel.setLevel_(NSFloatingWindowLevel)
+            self._response_panel.setOpaque_(False)
+            self._response_panel.setBackgroundColor_(NSColor.clearColor())
+            self._response_panel.setIgnoresMouseEvents_(False)
+            self._response_panel.setMovableByWindowBackground_(True)
+            self._response_panel.setCollectionBehavior_(1 << 1 | 1 << 4)
+            self._response_panel.setReleasedWhenClosed_(False)
+            self._response_panel.setHasShadow_(True)
+            self._response_panel.setFloatingPanel_(True)
+            self._response_panel.setBecomesKeyOnlyIfNeeded_(True)
+            self._response_panel.setHidesOnDeactivate_(False)
+        self._response_panel.setFrame_display_(NSMakeRect(x, y, pw, ph), True)
+
+        cv = self._response_panel.contentView()
+        for sub in list(cv.subviews()):
+            sub.removeFromSuperview()
+
+        blur = NSVisualEffectView.alloc().initWithFrame_(NSMakeRect(0, 0, pw, ph))
+        blur.setMaterial_(11)
+        blur.setBlendingMode_(0)
+        blur.setState_(1)
+        blur.setWantsLayer_(True)
+        blur.layer().setCornerRadius_(14)
+        blur.layer().setMasksToBounds_(True)
+        blur.layer().setBorderWidth_(0.5)
+        blur.layer().setBorderColor_(
+            NSColor.colorWithCalibratedRed_green_blue_alpha_(0.4, 0.4, 0.45, 0.4).CGColor())
+
+        # Header
+        self._label(blur, "SPEAKFLOW", 16, ph - 30, 120, 16,
+                    NSFont.systemFontOfSize_weight_(11, NSFontWeightSemibold), _DIM())
+
+        # Copy button
+        copy_btn = NSButton.alloc().initWithFrame_(NSMakeRect(pw - 62, ph - 32, 26, 24))
+        copy_btn.setButtonType_(0)
+        copy_btn.setBordered_(False)
+        copy_btn.setWantsLayer_(True)
+        copy_btn.setFocusRingType_(1)
+        copy_btn.setAttributedTitle_(NSAttributedString.alloc().initWithString_attributes_(
+            "⧉", {NSFontAttributeName: NSFont.systemFontOfSize_(14),
+                      NSForegroundColorAttributeName: _DIM()}))
+        copy_btn.setTarget_(self)
+        copy_btn.setAction_("popupCopy:")
+        blur.addSubview_(copy_btn)
+
+        # Close button
+        close_btn = NSButton.alloc().initWithFrame_(NSMakeRect(pw - 32, ph - 32, 24, 24))
+        close_btn.setButtonType_(0)
+        close_btn.setBordered_(False)
+        close_btn.setWantsLayer_(True)
+        close_btn.setFocusRingType_(1)
+        close_btn.setAttributedTitle_(NSAttributedString.alloc().initWithString_attributes_(
+            "✕", {NSFontAttributeName: NSFont.systemFontOfSize_(13),
+                      NSForegroundColorAttributeName: _DIM()}))
+        close_btn.setTarget_(self)
+        close_btn.setAction_("popupClose:")
+        blur.addSubview_(close_btn)
+
+        # Response text
+        scroll = NSScrollView.alloc().initWithFrame_(
+            NSMakeRect(12, pad_bottom, pw - 24, text_h))
+        scroll.setHasVerticalScroller_(True)
+        scroll.setAutohidesScrollers_(True)
+        scroll.setBorderType_(0)
+        scroll.setDrawsBackground_(False)
+        tv = NSTextView.alloc().initWithFrame_(
+            NSMakeRect(0, 0, pw - 24, text_h))
+        tv.setEditable_(False)
+        tv.setSelectable_(True)
+        tv.setBackgroundColor_(NSColor.clearColor())
+        tv.setDrawsBackground_(False)
+        tv.setTextColor_(_WHITE())
+        tv.setFont_(NSFont.systemFontOfSize_(13.5))
+        tv.setString_(text)
+        scroll.setDocumentView_(tv)
+        blur.addSubview_(scroll)
+
+        cv.addSubview_(blur)
+        self._response_panel.orderFront_(None)
+        self._popup_response_text = text
+
+        if self._popup_timer is not None:
+            self._popup_timer.cancel()
+        self._popup_timer = threading.Timer(
+            20.0, lambda: self._run_on_main(self._dismiss_response_popup))
+        self._popup_timer.start()
+
+    @objc.python_method
+    def _dismiss_response_popup(self):
+        if self._response_panel is not None:
+            self._response_panel.orderOut_(None)
+        if self._popup_timer is not None:
+            self._popup_timer.cancel()
+            self._popup_timer = None
+
+    def popupCopy_(self, sender):
+        if self._popup_response_text:
+            self._set_clipboard(self._popup_response_text)
+
+    def popupClose_(self, sender):
+        self._dismiss_response_popup()
+
+    @objc.python_method
+    def _ui_ai_response(self, text):
+        """Show AI response popup, update status to ready."""
+        self.status_label.setStringValue_("Response copied")
+        self.status_label.setTextColor_(_GREEN())
+        self._status_dot.layer().setBackgroundColor_(_GREEN().CGColor())
+        self._set_btn_title(self.rec_button, "Start Recording")
+        self.rec_button.layer().setBackgroundColor_(_GREEN().CGColor())
+        self.rec_button.setEnabled_(True)
+        self.status_item.setTitle_("SF")
+        self._float_mode = None
+        if self._level_timer is not None:
+            self._level_timer.invalidate()
+            self._level_timer = None
+        self._set_float_color(_GREEN())
+        self._last_text_label.setStringValue_(text)
+        self._show_response_popup(text)
+
+        def _auto_clear():
+            if not self._recording and not self._processing:
+                self._run_on_main(self._ui_ready)
+
+        threading.Timer(2.5, _auto_clear).start()
+
     @objc.python_method
     def _ui_mode_thinking(self):
         mode = self.config.active_mode
         labels = {
+            "auto": "Processing...",
             "ask": "AI thinking...",
             "vision": "Analyzing screen...",
             "vibecode": "Generating prompt...",
