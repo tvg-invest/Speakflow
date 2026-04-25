@@ -16,20 +16,28 @@ logger = logging.getLogger(__name__)
 HISTORY_FILE = Path.home() / ".speakflow" / "history.json"
 MAX_ENTRIES = 30
 _lock = threading.Lock()
+_cache: list[dict[str, Any]] | None = None
 
 
 def load() -> list[dict[str, Any]]:
+    global _cache
+    if _cache is not None:
+        return _cache
     if not HISTORY_FILE.exists():
-        return []
+        _cache = []
+        return _cache
     try:
         with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            _cache = json.load(f)
+            return _cache
     except (json.JSONDecodeError, OSError):
         logger.warning("Could not read history file; starting fresh.")
-        return []
+        _cache = []
+        return _cache
 
 
 def add(text: str, app_name: str = "", language: str = "") -> dict[str, Any]:
+    global _cache
     with _lock:
         entries = load()
         entry = {
@@ -40,6 +48,7 @@ def add(text: str, app_name: str = "", language: str = "") -> dict[str, Any]:
         }
         entries.insert(0, entry)
         entries = entries[:MAX_ENTRIES]
+        _cache = entries
         _save(entries)
     return entry
 

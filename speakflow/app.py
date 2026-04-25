@@ -1992,23 +1992,21 @@ TIPS
                 if has_screen_recording_permission():
                     self._screenshot_b64 = capture_screen_base64()
 
-            # Context mode activates in dictation and auto
+            # Grab selection + surrounding text in one AX round-trip
+            sel, ctx_before, ctx_after = self._run_on_main_sync(self._grab_text_context)
+
+            if self.config.context_cleanup:
+                self._before_text, self._after_text = ctx_before, ctx_after
+
             if mode in ("dictation", "auto"):
-                sel = self._run_on_main_sync(self._grab_selection)
                 if sel and sel.strip():
                     self._selected_text = sel
                     self._context_mode = True
                     logger.info("Context mode: grabbed %d chars from %s.",
                                 len(sel), self._active_app)
             elif mode in ("ask", "vibecode") or mode not in _BUILTIN_MODES:
-                sel = self._run_on_main_sync(self._grab_selection)
                 if sel and sel.strip():
                     self._selected_text = sel
-
-            if self.config.context_cleanup:
-                result = self._run_on_main_sync(self._grab_surrounding_text)
-                if result:
-                    self._before_text, self._after_text = result
 
         # Re-check: deactivate may have raced us during _grab_selection
         if not self._recording:
@@ -2095,67 +2093,47 @@ TIPS
     # ── Context mode (select + voice → AI response) ────────────
 
     @objc.python_method
-    def _grab_selection(self):
-        """Return selected text from the focused app using Accessibility API.
+    def _grab_text_context(self):
+        """Grab selection and surrounding text in a single AX round-trip.
 
-        Uses AXSelectedText on the focused UI element — no simulated keystrokes,
-        so no system alert sounds.  Returns '' if nothing is selected or if the
-        app doesn't support the Accessibility text API.
+        Returns (selected_text, before_text, after_text).
         """
         try:
             system_wide = ApplicationServices.AXUIElementCreateSystemWide()
             err, focused = ApplicationServices.AXUIElementCopyAttributeValue(
                 system_wide, "AXFocusedUIElement", None)
             if err != 0 or focused is None:
-                return ""
-            err, selected = ApplicationServices.AXUIElementCopyAttributeValue(
+                return ("", "", "")
+
+            # Selected text
+            selected = ""
+            err, sel_val = ApplicationServices.AXUIElementCopyAttributeValue(
                 focused, "AXSelectedText", None)
-            if err != 0 or not selected:
-                return ""
-            text = str(selected).strip()
-            return text if text else ""
-        except Exception:
-            logger.debug("AXSelectedText failed", exc_info=True)
-            return ""
+            if err == 0 and sel_val:
+                selected = str(sel_val).strip()
 
-    @objc.python_method
-    def _grab_surrounding_text(self):
-        """Return (before_text, after_text) around the cursor via Accessibility API.
-
-        Uses AXValue for the full text and AXSelectedTextRange for the cursor
-        position.  Falls back gracefully if either attribute is unavailable.
-        """
-        try:
-            system_wide = ApplicationServices.AXUIElementCreateSystemWide()
-            err, focused = ApplicationServices.AXUIElementCopyAttributeValue(
-                system_wide, "AXFocusedUIElement", None)
-            if err != 0 or focused is None:
-                return ("", "")
-
+            # Surrounding text
+            before, after = "", ""
             err, value = ApplicationServices.AXUIElementCopyAttributeValue(
                 focused, "AXValue", None)
-            if err != 0 or not value:
-                return ("", "")
-            full_text = str(value)
+            if err == 0 and value:
+                full_text = str(value)
+                err, range_val = ApplicationServices.AXUIElementCopyAttributeValue(
+                    focused, "AXSelectedTextRange", None)
+                if err == 0 and range_val is not None:
+                    try:
+                        r = range_val.rangeValue()
+                        before = full_text[:r.location][-300:]
+                        after = full_text[r.location + r.length:][:200]
+                    except Exception:
+                        before = full_text[-300:]
+                else:
+                    before = full_text[-300:]
 
-            # Try to get cursor position
-            err, range_val = ApplicationServices.AXUIElementCopyAttributeValue(
-                focused, "AXSelectedTextRange", None)
-            if err != 0 or range_val is None:
-                return (full_text[-300:], "")
-
-            try:
-                r = range_val.rangeValue()
-                loc, length = r.location, r.length
-            except Exception:
-                return (full_text[-300:], "")
-
-            before = full_text[:loc][-300:]
-            after = full_text[loc + length:][:200]
-            return (before, after)
+            return (selected, before, after)
         except Exception:
-            logger.debug("_grab_surrounding_text failed", exc_info=True)
-            return ("", "")
+            logger.debug("_grab_text_context failed", exc_info=True)
+            return ("", "", "")
 
     @objc.python_method
     def _set_clipboard(self, text):

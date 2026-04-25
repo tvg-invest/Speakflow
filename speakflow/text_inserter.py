@@ -142,7 +142,7 @@ class TextInserter:
     def _insert_via_keyboard(self, text: str) -> None:
         """Type *text* character-by-character using Quartz CGEvent."""
         src = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStatePrivate)
-        delay = 0.02
+        delay = 0.005
 
         for char in text:
             if char == "\n":

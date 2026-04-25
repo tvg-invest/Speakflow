@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import base64
-import io
 import logging
 
 import Quartz
-from AppKit import NSBitmapImageRep, NSJPEGFileType, NSImageCompressionFactor
+from AppKit import (
+    NSBitmapImageRep, NSJPEGFileType, NSImageCompressionFactor,
+    NSImage, NSSize, NSCompositingOperationCopy, NSGraphicsContext,
+    NSImageInterpolationHigh,
+)
+from Foundation import NSRect, NSPoint
 
 logger = logging.getLogger(__name__)
+
+_MAX_DIMENSION = 1920
 
 
 def has_screen_recording_permission() -> bool:
@@ -31,8 +37,7 @@ def request_screen_recording_permission() -> bool:
 def capture_screen_base64() -> str:
     """Capture the main display and return as base64-encoded JPEG.
 
-    Uses Quartz CGWindowListCreateImage directly (no subprocess) so the
-    permission is tied to the app bundle and persists once granted.
+    Downscales to max 1920px on the longest side to reduce API payload.
     Returns empty string on failure.
     """
     if not has_screen_recording_permission():
@@ -52,14 +57,39 @@ def capture_screen_base64() -> str:
             logger.warning("CGWindowListCreateImage returned None")
             return ""
 
-        bitmap = NSBitmapImageRep.alloc().initWithCGImage_(image)
+        src_w = Quartz.CGImageGetWidth(image)
+        src_h = Quartz.CGImageGetHeight(image)
+
+        scale = min(1.0, _MAX_DIMENSION / max(src_w, src_h))
+        dst_w = int(src_w * scale)
+        dst_h = int(src_h * scale)
+
+        if scale < 1.0:
+            ns_image = NSImage.alloc().initWithSize_(NSSize(dst_w, dst_h))
+            ns_image.lockFocus()
+            ctx = NSGraphicsContext.currentContext()
+            ctx.setImageInterpolation_(NSImageInterpolationHigh)
+            src_bitmap = NSBitmapImageRep.alloc().initWithCGImage_(image)
+            src_bitmap.drawInRect_fromRect_operation_fraction_respectFlipped_hints_(
+                NSRect(NSPoint(0, 0), NSSize(dst_w, dst_h)),
+                NSRect(NSPoint(0, 0), NSSize(src_w, src_h)),
+                NSCompositingOperationCopy, 1.0, True, None,
+            )
+            ns_image.unlockFocus()
+            bitmap = NSBitmapImageRep.alloc().initWithData_(ns_image.TIFFRepresentation())
+        else:
+            bitmap = NSBitmapImageRep.alloc().initWithCGImage_(image)
+
         jpeg_data = bitmap.representationUsingType_properties_(
-            NSJPEGFileType, {NSImageCompressionFactor: 0.7})
+            NSJPEGFileType, {NSImageCompressionFactor: 0.6})
         if jpeg_data is None:
             logger.warning("JPEG conversion failed")
             return ""
 
-        return base64.b64encode(bytes(jpeg_data)).decode("ascii")
+        result = base64.b64encode(bytes(jpeg_data)).decode("ascii")
+        logger.debug("Screenshot: %dx%d → %dx%d, %d KB",
+                     src_w, src_h, dst_w, dst_h, len(result) * 3 // 4 // 1024)
+        return result
     except Exception:
         logger.warning("Screen capture failed", exc_info=True)
         return ""
