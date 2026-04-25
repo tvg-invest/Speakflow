@@ -32,6 +32,7 @@ import ApplicationServices
 
 import openai
 
+from .actions import try_action
 from .audio import AudioRecorder
 from .config import Config
 from . import history
@@ -43,7 +44,7 @@ from .transcriber import Transcriber
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.6.1"
+VERSION = "1.7.0"
 
 LANG_OPTIONS = ["Danish", "English", "Auto-detect"]
 LANG_CODES = {"Danish": "da", "English": "en", "Auto-detect": "auto"}
@@ -1099,6 +1100,9 @@ the floating indicator:
   Custom Modes — create your own! Click "Edit" next to the mode selector to
       add custom modes with your own system prompts (e.g. "Translate to English",
       "Summarize", "Fix grammar").
+
+  Actions (Auto mode) — say "åbn Gmail", "open Spotify", "hvad er klokken",
+      "luk Safari", or "tjek vejret" to control your Mac by voice.
 
 
 HOW IT WORKS
@@ -2415,6 +2419,12 @@ TIPS
             self._deliver_text(expansion)
             return
 
+        action_result = try_action(raw)
+        if action_result is not None:
+            logger.info("Auto→action: %s", action_result)
+            self._run_on_main(lambda: self._ui_action_result(action_result))
+            return
+
         intent = self.transcriber.classify_intent(
             raw, app_context=app_ctx, language=self.config.language)
         logger.info("Auto classified '%s...' → %s", raw[:40], intent)
@@ -2696,6 +2706,26 @@ TIPS
         self._set_float_color(_GREEN())
         self._last_text_label.setStringValue_(text)
         self._show_response_popup(text)
+        self._auto_clear_after(2.5)
+
+    @objc.python_method
+    def _ui_action_result(self, text):
+        """Show action result briefly, then return to ready."""
+        self.status_label.setStringValue_(text)
+        self.status_label.setTextColor_(_GREEN())
+        self._status_dot.layer().setBackgroundColor_(_GREEN().CGColor())
+        self._set_btn_title(self.rec_button, "Start Recording")
+        self.rec_button.layer().setBackgroundColor_(_GREEN().CGColor())
+        self.rec_button.setEnabled_(True)
+        self.status_item.setTitle_("SF")
+        self._float_mode = None
+        if self._level_timer is not None:
+            self._level_timer.invalidate()
+            self._level_timer = None
+        self._set_float_color(_GREEN())
+        self._last_text_label.setStringValue_(text)
+        self._processing = False
+        self._float_triggered = False
         self._auto_clear_after(2.5)
 
     @objc.python_method
