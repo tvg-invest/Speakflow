@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import io
 import logging
+import re
+import unicodedata
 
 import openai
 
@@ -54,6 +56,28 @@ class Transcriber:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    _GARBLE_DOTS = re.compile(r"(?:[A-Z]\.){3,}")
+    _GARBLE_NON_LATIN_RATIO = 0.3
+
+    @staticmethod
+    def _is_garbled(text: str) -> bool:
+        """Return True if Whisper output looks like a language-detection failure.
+
+        Catches non-Latin script (Thai, Arabic, CJK …), all-caps-with-dots
+        patterns like "L.I.V.A.L.I.D", and other hallucination signatures.
+        """
+        if not text or len(text) < 2:
+            return False
+        non_latin = sum(
+            1 for ch in text
+            if ch.isalpha() and "LATIN" not in unicodedata.name(ch, "LATIN")
+        )
+        if non_latin / max(len(text), 1) > Transcriber._GARBLE_NON_LATIN_RATIO:
+            return True
+        if Transcriber._GARBLE_DOTS.search(text):
+            return True
+        return False
 
     def _chat(self, label: str, **kwargs) -> str:
         """Run a chat completion and return the text, with unified error handling."""
@@ -120,6 +144,17 @@ class Transcriber:
             response = self.client.audio.transcriptions.create(**kwargs, timeout=30)
             raw_text: str = response.text
             logger.debug("Raw transcription: %s", raw_text)
+
+            if self.auto_detect and self._is_garbled(raw_text):
+                logger.warning(
+                    "Garbled auto-detect output (%r), retrying with language=%s",
+                    raw_text, self.language,
+                )
+                buf.seek(0)
+                kwargs["language"] = self.language
+                response = self.client.audio.transcriptions.create(**kwargs, timeout=30)
+                raw_text = response.text
+                logger.debug("Retry transcription: %s", raw_text)
         except (openai.AuthenticationError, openai.RateLimitError,
                 openai.APIConnectionError, openai.APIError) as exc:
             _handle_api_error(exc, "Transcription")
