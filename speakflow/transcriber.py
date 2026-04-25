@@ -304,24 +304,31 @@ class Transcriber:
 
     _ASK_PREFIXES = (
         "what is", "what's", "what are", "what does", "what do",
+        "what time", "what kind",
         "how do", "how does", "how can", "how to", "how is",
+        "how many", "how much", "how long", "how old",
         "why is", "why does", "why do", "why are",
-        "when is", "when does", "when did",
-        "where is", "where does", "where can",
+        "when is", "when does", "when did", "when was",
+        "where is", "where does", "where can", "where do",
         "who is", "who was", "who are",
         "can you explain", "explain", "tell me", "define",
         "is it", "is there", "are there",
         "hvad er", "hvad betyder", "hvad hedder", "hvad gør",
-        "hvordan", "hvorfor", "hvornår", "hvor er", "hvor kan",
+        "hvad tid", "hvad slags",
+        "hvordan", "hvorfor", "hvornår",
+        "hvor er", "hvor kan", "hvor mange", "hvor meget",
         "hvem er", "hvem var",
-        "kan du forklare", "forklar", "fortæl mig", "fortæl om",
+        "kan du forklare", "forklar",
+        "fortæl mig", "fortæl om",
         "er det", "er der", "findes der",
     )
     _VISION_KEYWORDS = (
-        "screen", "on my screen", "what do you see", "what is this",
+        "on my screen", "my screen", "what do you see", "what is this",
         "this error", "this page", "look at",
-        "skærm", "på min skærm", "hvad ser du", "hvad er det her",
+        "screen",
+        "på min skærm", "min skærm", "hvad ser du", "hvad er det her",
         "denne fejl", "denne side", "kig på",
+        "skærm",
     )
     _VIBECODE_PREFIXES = (
         "create a", "build a", "make a", "write a function",
@@ -330,32 +337,71 @@ class Transcriber:
         "lav en", "byg en", "skriv en funktion", "skriv et script",
         "skriv et program", "skriv kode", "generer en", "implementer",
     )
+    _DICTATION_WORDS = frozenset(("said", "asked", "sagde", "spurgte"))
+    _SUBORDINATORS = frozenset((
+        "that", "because", "fordi", "since", "når",
+        "and", "og", "end", "then", "så",
+    ))
 
     def classify_intent(self, text: str, app_context: str = "",
                         language: str = "") -> str:
         """Classify voice input intent using local heuristics.
 
+        Uses word count, word-boundary matching, and structural checks
+        to distinguish dictation from questions, vision requests, and
+        coding instructions.
+
         Returns one of: ``"dictation"``, ``"ask"``, ``"vision"``, ``"vibecode"``.
         Defaults to ``"dictation"`` when uncertain.
         """
         t = text.lower().strip()
+        words = t.split()
+        wc = len(words)
 
-        for kw in self._VISION_KEYWORDS:
-            if kw in t:
-                logger.info("Auto classified (local) → vision")
-                return "vision"
+        clean = [w.strip('.,!?;:"\'-()[]') for w in words]
+        padded = f" {' '.join(clean)} "
 
         for prefix in self._VIBECODE_PREFIXES:
             if t.startswith(prefix):
-                logger.info("Auto classified (local) → vibecode")
+                logger.info("Auto classified → vibecode")
                 return "vibecode"
 
-        for prefix in self._ASK_PREFIXES:
-            if t.startswith(prefix):
-                logger.info("Auto classified (local) → ask")
-                return "ask"
+        if wc > 20:
+            logger.info("Auto classified → dictation (long text, %d words)", wc)
+            return "dictation"
 
-        logger.info("Auto classified (local) → dictation")
+        for kw in self._VISION_KEYWORDS:
+            if f" {kw} " in padded:
+                logger.info("Auto classified → vision ('%s')", kw)
+                return "vision"
+
+        if wc > 15:
+            logger.info("Auto classified → dictation (%d words)", wc)
+            return "dictation"
+
+        for prefix in self._ASK_PREFIXES:
+            if not t.startswith(prefix):
+                continue
+            rest = t[len(prefix):].strip()
+            if rest.startswith(("ikke ", "not ", "don't ", "aldrig ")):
+                break
+            if prefix in ("explain", "forklar") and rest.startswith("to "):
+                break
+            if self._DICTATION_WORDS.intersection(clean):
+                break
+            if prefix == "how to" and " is " in rest:
+                break
+            if prefix in ("er det", "is it") and any(
+                w in clean for w in ("muligt", "possible", "okay", "ok")):
+                break
+            if any(w in clean for w in ("nogen", "anyone", "somebody")):
+                break
+            if wc > 8 and self._SUBORDINATORS.intersection(clean):
+                break
+            logger.info("Auto classified → ask (prefix '%s')", prefix)
+            return "ask"
+
+        logger.info("Auto classified → dictation")
         return "dictation"
 
     def ask_question(self, question: str, model: str = "gpt-4o",
