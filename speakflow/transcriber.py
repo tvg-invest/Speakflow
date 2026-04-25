@@ -396,6 +396,9 @@ class Transcriber:
                 break
             if any(w in clean for w in ("nogen", "anyone", "somebody")):
                 break
+            if prefix in ("hvordan", "hvornår", "hvorfor") and len(clean) > 1 and clean[1] in (
+                "vi", "jeg", "han", "hun", "de", "man", "du"):
+                break
             if wc > 8 and self._SUBORDINATORS.intersection(clean):
                 break
             logger.info("Auto classified → ask (prefix '%s')", prefix)
