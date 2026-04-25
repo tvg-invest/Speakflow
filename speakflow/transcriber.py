@@ -302,74 +302,61 @@ class Transcriber:
             timeout=30,
         )
 
+    _ASK_PREFIXES = (
+        "what is", "what's", "what are", "what does", "what do",
+        "how do", "how does", "how can", "how to", "how is",
+        "why is", "why does", "why do", "why are",
+        "when is", "when does", "when did",
+        "where is", "where does", "where can",
+        "who is", "who was", "who are",
+        "can you explain", "explain", "tell me", "define",
+        "is it", "is there", "are there",
+        "hvad er", "hvad betyder", "hvad hedder", "hvad gør",
+        "hvordan", "hvorfor", "hvornår", "hvor er", "hvor kan",
+        "hvem er", "hvem var",
+        "kan du forklare", "forklar", "fortæl mig", "fortæl om",
+        "er det", "er der", "findes der",
+    )
+    _VISION_KEYWORDS = (
+        "screen", "on my screen", "what do you see", "what is this",
+        "this error", "this page", "look at",
+        "skærm", "på min skærm", "hvad ser du", "hvad er det her",
+        "denne fejl", "denne side", "kig på",
+    )
+    _VIBECODE_PREFIXES = (
+        "create a", "build a", "make a", "write a function",
+        "write a script", "write a program", "write code",
+        "generate a", "implement", "code a", "develop",
+        "lav en", "byg en", "skriv en funktion", "skriv et script",
+        "skriv et program", "skriv kode", "generer en", "implementer",
+    )
+
     def classify_intent(self, text: str, app_context: str = "",
                         language: str = "") -> str:
-        """Classify voice input intent for auto-mode routing.
+        """Classify voice input intent using local heuristics.
 
         Returns one of: ``"dictation"``, ``"ask"``, ``"vision"``, ``"vibecode"``.
-        Falls back to ``"dictation"`` on any error.
+        Defaults to ``"dictation"`` when uncertain.
         """
-        app_hint = ""
-        if app_context:
-            app_hint = f"\nThe user is currently in: {app_context}"
-        if language and language != "auto":
-            lang_names = {"da": "Danish", "en": "English", "de": "German",
-                          "fr": "French", "es": "Spanish", "sv": "Swedish",
-                          "nb": "Norwegian", "nl": "Dutch"}
-            lang_name = lang_names.get(language, language)
-            app_hint += f"\nThe user's language is: {lang_name}"
+        t = text.lower().strip()
 
-        system_prompt = (
-            "You are classifying a voice transcription to decide how to handle it.\n"
-            "The user is using a voice-to-text app. MOST voice input is dictation — "
-            "text the user wants typed into their current app.\n\n"
-            "CRITICAL RULE: Only classify as something other than \"dictation\" if "
-            "the user is clearly talking TO an AI assistant, not composing text to "
-            "be typed. Questions that are part of a message (e.g. \"Can you send me "
-            "the report?\", \"Hvornår er mødet?\") are DICTATION — the user is "
-            "writing a message, not asking the AI.\n\n"
-            "Signals that it IS dictation (type as-is):\n"
-            "- Conversational text, messages, emails, notes, comments\n"
-            "- Sentences addressed to another person (\"Hi John\", \"Hej, kan du...\")\n"
-            "- Any text the user would normally type themselves\n"
-            "- Short replies, acknowledgements, or casual speech\n\n"
-            "Signals that it is NOT dictation:\n"
-            "- Explicitly asks the AI for help: \"what is\", \"explain\", \"how do I\", "
-            "\"fortæl mig om\", \"hvad betyder\"\n"
-            "- References the screen: \"what's on my screen\", \"this error\", "
-            "\"hvad ser jeg her\"\n"
-            "- Describes code to build: \"create a function that\", \"build a website\", "
-            "\"lav en app der\"\n\n"
-            "Categories:\n"
-            "- \"dictation\" — text to type as-is (DEFAULT when uncertain)\n"
-            "- \"ask\" — question directed at the AI for an answer\n"
-            "- \"vision\" — asking about something visible on screen\n"
-            "- \"vibecode\" — describing software/code to build\n"
-            + app_hint
-            + "\n\nOutput ONLY the category name. Nothing else."
-        )
-        try:
-            logger.debug("Classifying intent for auto mode")
-            response = self.client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": text},
-                ],
-                max_tokens=10,
-                timeout=10,
-            )
-            if not response.choices:
-                return "dictation"
-            result = response.choices[0].message.content.strip().lower().strip('"')
-            if result in ("dictation", "ask", "vision", "vibecode"):
-                logger.info("Auto mode classified as: %s", result)
-                return result
-            return "dictation"
-        except Exception:
-            logger.warning("Intent classification failed, defaulting to dictation",
-                           exc_info=True)
-            return "dictation"
+        for kw in self._VISION_KEYWORDS:
+            if kw in t:
+                logger.info("Auto classified (local) → vision")
+                return "vision"
+
+        for prefix in self._VIBECODE_PREFIXES:
+            if t.startswith(prefix):
+                logger.info("Auto classified (local) → vibecode")
+                return "vibecode"
+
+        for prefix in self._ASK_PREFIXES:
+            if t.startswith(prefix):
+                logger.info("Auto classified (local) → ask")
+                return "ask"
+
+        logger.info("Auto classified (local) → dictation")
+        return "dictation"
 
     def ask_question(self, question: str, model: str = "gpt-4o",
                      app_context: str = "") -> str:

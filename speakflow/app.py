@@ -43,27 +43,39 @@ from .transcriber import Transcriber
 
 logger = logging.getLogger(__name__)
 
+VERSION = "1.4.0"
+
 LANG_OPTIONS = ["Danish", "English", "Auto-detect"]
 LANG_CODES = {"Danish": "da", "English": "en", "Auto-detect": "auto"}
 
 _LAUNCH_AGENT = Path.home() / "Library" / "LaunchAgents" / "com.speakflow.app.plist"
 _APP_PATH = Path.home() / "Desktop" / "SpeakFlow.app"
 
-# ── Colour palette ──────────────────────────────────────────────
-_BG        = lambda: NSColor.colorWithCalibratedRed_green_blue_alpha_(0.10, 0.10, 0.13, 1.0)
-_CARD      = lambda: NSColor.colorWithCalibratedRed_green_blue_alpha_(0.15, 0.15, 0.19, 1.0)
-_CARD_EDGE = lambda: NSColor.colorWithCalibratedRed_green_blue_alpha_(0.22, 0.22, 0.27, 1.0)
-_ACCENT    = lambda: NSColor.colorWithCalibratedRed_green_blue_alpha_(0.35, 0.58, 1.0, 1.0)
-_GREEN     = lambda: NSColor.colorWithCalibratedRed_green_blue_alpha_(0.30, 0.85, 0.55, 1.0)
-_RED       = lambda: NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.32, 0.32, 1.0)
-_ORANGE    = lambda: NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.65, 0.20, 1.0)
-_GOLD      = lambda: NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 0.80, 0.28, 1.0)
-_PURPLE    = lambda: NSColor.colorWithCalibratedRed_green_blue_alpha_(0.65, 0.40, 1.0, 1.0)
-_DIM       = lambda: NSColor.colorWithCalibratedRed_green_blue_alpha_(0.50, 0.50, 0.56, 1.0)
-_WHITE     = lambda: NSColor.whiteColor()
-_SEC_BG    = lambda: NSColor.colorWithCalibratedRed_green_blue_alpha_(0.18, 0.18, 0.23, 1.0)
-_SEC_EDGE  = lambda: NSColor.colorWithCalibratedRed_green_blue_alpha_(0.30, 0.30, 0.36, 1.0)
-_TEAL      = lambda: NSColor.colorWithCalibratedRed_green_blue_alpha_(0.25, 0.78, 0.85, 1.0)
+# ── Colour palette (lazy-cached — created once on first access) ──
+_color_cache: dict[str, object] = {}
+
+def _c(name: str, r: float, g: float, b: float, a: float = 1.0):
+    cached = _color_cache.get(name)
+    if cached is not None:
+        return cached
+    c = NSColor.colorWithCalibratedRed_green_blue_alpha_(r, g, b, a)
+    _color_cache[name] = c
+    return c
+
+def _BG():        return _c("bg",   0.10, 0.10, 0.13)
+def _CARD():      return _c("card", 0.15, 0.15, 0.19)
+def _CARD_EDGE(): return _c("ce",   0.22, 0.22, 0.27)
+def _ACCENT():    return _c("acc",  0.35, 0.58, 1.0)
+def _GREEN():     return _c("grn",  0.30, 0.85, 0.55)
+def _RED():       return _c("red",  1.0,  0.32, 0.32)
+def _ORANGE():    return _c("org",  1.0,  0.65, 0.20)
+def _GOLD():      return _c("gld",  1.0,  0.80, 0.28)
+def _PURPLE():    return _c("pur",  0.65, 0.40, 1.0)
+def _DIM():       return _c("dim",  0.50, 0.50, 0.56)
+def _WHITE():     return _c("wht",  1.0,  1.0,  1.0)
+def _SEC_BG():    return _c("sbg",  0.18, 0.18, 0.23)
+def _SEC_EDGE():  return _c("sed",  0.30, 0.30, 0.36)
+def _TEAL():      return _c("teal", 0.25, 0.78, 0.85)
 
 # ── Mode system ────────────────────────────────────────────────
 _BUILTIN_MODES = ["auto", "dictation", "ask", "vision", "vibecode"]
@@ -836,6 +848,9 @@ class SpeakFlowUI(NSObject):
 
         self._label(v, "Switch modes via popup above or right-click the floating bar",
                     pad, y, cw, 14, NSFont.systemFontOfSize_(10), _DIM(), True)
+        y -= 16
+        self._label(v, f"v{VERSION}", pad, y, cw, 12,
+                    NSFont.systemFontOfSize_(9), _DIM(), True)
 
     # ── Floating waveform indicator ─────────────────────────────
 
@@ -1309,12 +1324,7 @@ TIPS
         self.status_label.setStringValue_("API key saved")
         self.status_label.setTextColor_(_GREEN())
         logger.info("API key updated.")
-
-        def _auto_clear():
-            if not self._recording and not self._processing:
-                self._run_on_main(self._ui_ready)
-
-        threading.Timer(2.0, _auto_clear).start()
+        self._auto_clear_after(2.0)
 
     def micChanged_(self, sender):
         idx = sender.indexOfSelectedItem()
@@ -1941,12 +1951,7 @@ TIPS
         self._update_btn.setEnabled_(True)
         self.status_label.setStringValue_(msg)
         self.status_label.setTextColor_(_GREEN() if is_success else _ACCENT())
-
-        def _clear():
-            if not self._recording and not self._processing:
-                self._run_on_main(self._ui_ready)
-
-        threading.Timer(4.0, _clear).start()
+        self._auto_clear_after(4.0)
 
     # ── Recording ───────────────────────────────────────────────
 
@@ -2481,12 +2486,7 @@ TIPS
         self._set_float_color(_GREEN())
         self._last_text_label.setStringValue_(text)
         self._show_response_popup(text)
-
-        def _auto_clear():
-            if not self._recording and not self._processing:
-                self._run_on_main(self._ui_ready)
-
-        threading.Timer(2.5, _auto_clear).start()
+        self._auto_clear_after(2.5)
 
     @objc.python_method
     def _ui_context_recording(self):
@@ -2626,8 +2626,9 @@ TIPS
 
         if self._popup_timer is not None:
             self._popup_timer.cancel()
+        dismiss_delay = min(20.0, max(4.0, len(text) * 0.06))
         self._popup_timer = threading.Timer(
-            20.0, lambda: self._run_on_main(self._dismiss_response_popup))
+            dismiss_delay, lambda: self._run_on_main(self._dismiss_response_popup))
         self._popup_timer.start()
 
     @objc.python_method
@@ -2662,12 +2663,7 @@ TIPS
         self._set_float_color(_GREEN())
         self._last_text_label.setStringValue_(text)
         self._show_response_popup(text)
-
-        def _auto_clear():
-            if not self._recording and not self._processing:
-                self._run_on_main(self._ui_ready)
-
-        threading.Timer(2.5, _auto_clear).start()
+        self._auto_clear_after(2.5)
 
     @objc.python_method
     def _ui_mode_thinking(self):
@@ -2723,13 +2719,15 @@ TIPS
             old_x = bar.frame().origin.x
             bar.setFrame_(NSMakeRect(old_x, (fh - min_h) / 2, bw, min_h))
         self._set_float_color(_RED())
+        self._auto_clear_after(3.0)
 
-        def _auto_clear():
-            # Only clear the error if no new recording/processing has started.
+    @objc.python_method
+    def _auto_clear_after(self, seconds: float):
+        """Reset UI to ready after a delay, unless a new recording started."""
+        def _check():
             if not self._recording and not self._processing:
                 self._run_on_main(self._ui_ready)
-
-        threading.Timer(3.0, _auto_clear).start()
+        threading.Timer(seconds, _check).start()
 
     @objc.python_method
     def _run_on_main(self, func):
