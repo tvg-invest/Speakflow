@@ -138,6 +138,11 @@ def _play(filename: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def warm_up() -> None:
+    """Pre-generate sound files in a background thread."""
+    threading.Thread(target=_ensure_sounds, daemon=True).start()
+
+
 def play_start_sound() -> None:
     _play(_TONE_START[0])
 

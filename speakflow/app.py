@@ -36,7 +36,7 @@ from .audio import AudioRecorder
 from .config import Config
 from . import history
 from .hotkey import HotkeyListener, is_modifier_only, _KEYCODE_MAP
-from .sounds import play_error_sound, play_start_sound, play_stop_sound, set_volume
+from .sounds import play_error_sound, play_start_sound, play_stop_sound, set_volume, warm_up as _warm_up_sounds
 from .screen_capture import capture_screen_base64, has_screen_recording_permission
 from .text_inserter import TextInserter
 from .transcriber import Transcriber
@@ -211,6 +211,7 @@ class SpeakFlowUI(NSObject):
         )
 
         set_volume(self.config.sound_volume)
+        _warm_up_sounds()
 
         self._build_status_bar()
         self._build_window()
@@ -450,17 +451,23 @@ class SpeakFlowUI(NSObject):
     # ── Voice shortcuts ────────────────────────────────────────
 
     @objc.python_method
+    def _rebuild_shortcut_map(self):
+        """Build a dict from normalised triggers to expansions."""
+        self._shortcut_map = {}
+        for sc in self.config.voice_shortcuts:
+            trigger = sc.get("trigger", "").lower().strip().rstrip(".,!?;:")
+            if trigger:
+                self._shortcut_map[trigger] = sc.get("expansion", "")
+
+    @objc.python_method
     def _check_voice_shortcut(self, text):
         """Return expansion if text matches a voice shortcut trigger, else None."""
-        shortcuts = self.config.voice_shortcuts
-        if not shortcuts:
+        if not hasattr(self, "_shortcut_map"):
+            self._rebuild_shortcut_map()
+        if not self._shortcut_map:
             return None
         normalized = text.lower().strip().rstrip(".,!?;:")
-        for sc in shortcuts:
-            trigger = sc.get("trigger", "").lower().strip().rstrip(".,!?;:")
-            if trigger and normalized == trigger:
-                return sc.get("expansion", "")
-        return None
+        return self._shortcut_map.get(normalized)
 
     # ── Rewrite classification ─────────────────────────────────
 
@@ -1771,12 +1778,14 @@ TIPS
             if sc["trigger"].lower() == trigger.lower():
                 sc["expansion"] = expansion
                 self.config.voice_shortcuts = shortcuts
+                self._rebuild_shortcut_map()
                 self._add_shortcut_win.close()
                 if self._shortcuts_win is not None and self._shortcuts_win.isVisible():
                     self._build_shortcuts_manager()
                 return
         shortcuts.append({"trigger": trigger, "expansion": expansion})
         self.config.voice_shortcuts = shortcuts
+        self._rebuild_shortcut_map()
         self._add_shortcut_win.close()
         if self._shortcuts_win is not None and self._shortcuts_win.isVisible():
             self._build_shortcuts_manager()
@@ -1789,6 +1798,7 @@ TIPS
             deleted = shortcuts[idx]["trigger"]
             shortcuts.pop(idx)
             self.config.voice_shortcuts = shortcuts
+            self._rebuild_shortcut_map()
             self._build_shortcuts_manager()
             logger.info("Voice shortcut deleted: %s", deleted)
 
@@ -2354,35 +2364,32 @@ TIPS
     @objc.python_method
     def _process_auto_mode(self, audio_data):
         """Auto mode: classify intent then route."""
+        app_ctx = (self._active_app or "") if self.config.context_cleanup else ""
+
         raw = self.transcriber.transcribe(audio_data, skip_cleanup=True)
         if not raw or not raw.strip():
             self._run_on_main(lambda: self._ui_error("No speech detected."))
             return
 
-        # Check voice shortcuts before classifying intent
         expansion = self._check_voice_shortcut(raw)
         if expansion is not None:
             logger.info("Auto→shortcut: %d chars.", len(expansion))
             self._deliver_text(expansion)
             return
 
-        app_ctx = (self._active_app or "") if self.config.context_cleanup else ""
         intent = self.transcriber.classify_intent(
             raw, app_context=app_ctx, language=self.config.language)
         logger.info("Auto classified '%s...' → %s", raw[:40], intent)
 
         if intent == "dictation":
+            text = raw
             if self.transcriber.editing_strength != "off":
                 try:
                     text = self.transcriber.cleanup_text(
                         raw, self.transcriber.language, app_ctx,
-                        self._before_text, self._after_text)
+                        self._before_text, self._after_text) or raw
                 except Exception:
-                    text = raw
-            else:
-                text = raw
-            if not text or not text.strip():
-                text = raw
+                    pass
             logger.info("Auto→dictation: %d chars.", len(text))
             self._deliver_text(text)
         else:
@@ -2489,8 +2496,103 @@ TIPS
     # ── Response popup ──────────────────────────────────────────
 
     @objc.python_method
+    def _build_response_panel(self):
+        """Create the popup panel and its cached subviews once."""
+        pw, ph = 340, 400
+        screen = NSScreen.mainScreen()
+        visible = screen.visibleFrame()
+        x = visible.origin.x + visible.size.width - pw - 16
+        y = visible.origin.y + visible.size.height - ph - 8
+
+        self._response_panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
+            NSMakeRect(x, y, pw, ph), 1 << 7, NSBackingStoreBuffered, False)
+        self._response_panel.setLevel_(NSFloatingWindowLevel)
+        self._response_panel.setOpaque_(False)
+        self._response_panel.setBackgroundColor_(NSColor.clearColor())
+        self._response_panel.setIgnoresMouseEvents_(False)
+        self._response_panel.setMovableByWindowBackground_(True)
+        self._response_panel.setCollectionBehavior_(1 << 1 | 1 << 4)
+        self._response_panel.setReleasedWhenClosed_(False)
+        self._response_panel.setHasShadow_(True)
+        self._response_panel.setFloatingPanel_(True)
+        self._response_panel.setBecomesKeyOnlyIfNeeded_(True)
+        self._response_panel.setHidesOnDeactivate_(False)
+
+        cv = self._response_panel.contentView()
+
+        self._popup_blur = NSVisualEffectView.alloc().initWithFrame_(NSMakeRect(0, 0, pw, ph))
+        self._popup_blur.setMaterial_(11)
+        self._popup_blur.setBlendingMode_(0)
+        self._popup_blur.setState_(1)
+        self._popup_blur.setWantsLayer_(True)
+        self._popup_blur.layer().setCornerRadius_(14)
+        self._popup_blur.layer().setMasksToBounds_(True)
+        self._popup_blur.layer().setBorderWidth_(0.5)
+        self._popup_blur.layer().setBorderColor_(
+            NSColor.colorWithCalibratedRed_green_blue_alpha_(0.4, 0.4, 0.45, 0.4).CGColor())
+
+        self._popup_header = self._label(self._popup_blur, "SPEAKFLOW", 16, ph - 30, 120, 16,
+                    NSFont.systemFontOfSize_weight_(11, NSFontWeightSemibold), _DIM())
+
+        copy_btn = NSButton.alloc().initWithFrame_(NSMakeRect(pw - 62, ph - 32, 26, 24))
+        copy_btn.setButtonType_(0)
+        copy_btn.setBordered_(False)
+        copy_btn.setWantsLayer_(True)
+        copy_btn.setFocusRingType_(1)
+        copy_btn.setAttributedTitle_(NSAttributedString.alloc().initWithString_attributes_(
+            "⧉", {NSFontAttributeName: NSFont.systemFontOfSize_(14),
+                      NSForegroundColorAttributeName: _DIM()}))
+        copy_btn.setTarget_(self)
+        copy_btn.setAction_("popupCopy:")
+        self._popup_blur.addSubview_(copy_btn)
+        self._popup_copy_btn = copy_btn
+
+        close_btn = NSButton.alloc().initWithFrame_(NSMakeRect(pw - 32, ph - 32, 24, 24))
+        close_btn.setButtonType_(0)
+        close_btn.setBordered_(False)
+        close_btn.setWantsLayer_(True)
+        close_btn.setFocusRingType_(1)
+        close_btn.setAttributedTitle_(NSAttributedString.alloc().initWithString_attributes_(
+            "✕", {NSFontAttributeName: NSFont.systemFontOfSize_(13),
+                      NSForegroundColorAttributeName: _DIM()}))
+        close_btn.setTarget_(self)
+        close_btn.setAction_("popupClose:")
+        self._popup_blur.addSubview_(close_btn)
+        self._popup_close_btn = close_btn
+
+        cv.addSubview_(self._popup_blur)
+
+        text_bg = NSColor.colorWithCalibratedRed_green_blue_alpha_(0.13, 0.13, 0.16, 1.0)
+        text_fg = NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 1.0, 1.0, 1.0)
+        self._popup_scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(12, 14, pw - 24, 350))
+        self._popup_scroll.setHasVerticalScroller_(True)
+        self._popup_scroll.setAutohidesScrollers_(True)
+        self._popup_scroll.setBorderType_(0)
+        self._popup_scroll.setDrawsBackground_(True)
+        self._popup_scroll.setBackgroundColor_(text_bg)
+        self._popup_scroll.setWantsLayer_(True)
+        self._popup_scroll.layer().setCornerRadius_(8)
+        self._popup_scroll.layer().setMasksToBounds_(True)
+        self._popup_tv = NSTextView.alloc().initWithFrame_(NSMakeRect(0, 0, pw - 24, 350))
+        self._popup_tv.setEditable_(False)
+        self._popup_tv.setSelectable_(True)
+        self._popup_tv.setDrawsBackground_(True)
+        self._popup_tv.setBackgroundColor_(text_bg)
+        self._popup_tv.setTextColor_(text_fg)
+        self._popup_tv.setFont_(NSFont.systemFontOfSize_(13.5))
+        self._popup_tv.setVerticallyResizable_(True)
+        self._popup_tv.setHorizontallyResizable_(False)
+        self._popup_tv.textContainer().setContainerSize_((pw - 24, 1e7))
+        self._popup_tv.textContainer().setWidthTracksTextView_(True)
+        self._popup_scroll.setDocumentView_(self._popup_tv)
+        cv.addSubview_(self._popup_scroll)
+
+    @objc.python_method
     def _show_response_popup(self, text):
         """Show a floating frosted-glass popup with the AI response."""
+        if self._response_panel is None:
+            self._build_response_panel()
+
         pw = 340
         line_h = 18
         chars_per_line = 42
@@ -2507,99 +2609,13 @@ TIPS
         x = visible.origin.x + visible.size.width - pw - 16
         y = visible.origin.y + visible.size.height - ph - 8
 
-        if self._response_panel is None:
-            self._response_panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
-                NSMakeRect(x, y, pw, ph), 1 << 7, NSBackingStoreBuffered, False)
-            self._response_panel.setLevel_(NSFloatingWindowLevel)
-            self._response_panel.setOpaque_(False)
-            self._response_panel.setBackgroundColor_(NSColor.clearColor())
-            self._response_panel.setIgnoresMouseEvents_(False)
-            self._response_panel.setMovableByWindowBackground_(True)
-            self._response_panel.setCollectionBehavior_(1 << 1 | 1 << 4)
-            self._response_panel.setReleasedWhenClosed_(False)
-            self._response_panel.setHasShadow_(True)
-            self._response_panel.setFloatingPanel_(True)
-            self._response_panel.setBecomesKeyOnlyIfNeeded_(True)
-            self._response_panel.setHidesOnDeactivate_(False)
         self._response_panel.setFrame_display_(NSMakeRect(x, y, pw, ph), True)
-
-        cv = self._response_panel.contentView()
-        for sub in list(cv.subviews()):
-            sub.removeFromSuperview()
-
-        blur = NSVisualEffectView.alloc().initWithFrame_(NSMakeRect(0, 0, pw, ph))
-        blur.setMaterial_(11)
-        blur.setBlendingMode_(0)
-        blur.setState_(1)
-        blur.setWantsLayer_(True)
-        blur.layer().setCornerRadius_(14)
-        blur.layer().setMasksToBounds_(True)
-        blur.layer().setBorderWidth_(0.5)
-        blur.layer().setBorderColor_(
-            NSColor.colorWithCalibratedRed_green_blue_alpha_(0.4, 0.4, 0.45, 0.4).CGColor())
-
-        # Header
-        self._label(blur, "SPEAKFLOW", 16, ph - 30, 120, 16,
-                    NSFont.systemFontOfSize_weight_(11, NSFontWeightSemibold), _DIM())
-
-        # Copy button
-        copy_btn = NSButton.alloc().initWithFrame_(NSMakeRect(pw - 62, ph - 32, 26, 24))
-        copy_btn.setButtonType_(0)
-        copy_btn.setBordered_(False)
-        copy_btn.setWantsLayer_(True)
-        copy_btn.setFocusRingType_(1)
-        copy_btn.setAttributedTitle_(NSAttributedString.alloc().initWithString_attributes_(
-            "⧉", {NSFontAttributeName: NSFont.systemFontOfSize_(14),
-                      NSForegroundColorAttributeName: _DIM()}))
-        copy_btn.setTarget_(self)
-        copy_btn.setAction_("popupCopy:")
-        blur.addSubview_(copy_btn)
-
-        # Close button
-        close_btn = NSButton.alloc().initWithFrame_(NSMakeRect(pw - 32, ph - 32, 24, 24))
-        close_btn.setButtonType_(0)
-        close_btn.setBordered_(False)
-        close_btn.setWantsLayer_(True)
-        close_btn.setFocusRingType_(1)
-        close_btn.setAttributedTitle_(NSAttributedString.alloc().initWithString_attributes_(
-            "✕", {NSFontAttributeName: NSFont.systemFontOfSize_(13),
-                      NSForegroundColorAttributeName: _DIM()}))
-        close_btn.setTarget_(self)
-        close_btn.setAction_("popupClose:")
-        blur.addSubview_(close_btn)
-
-        cv.addSubview_(blur)
-
-        # Response text — NSTextView+NSScrollView on cv (not blur) with
-        # opaque bg.  Placing on cv avoids vibrancy compositing that made
-        # text invisible when inside the blur view.
-        text_bg = NSColor.colorWithCalibratedRed_green_blue_alpha_(0.13, 0.13, 0.16, 1.0)
-        text_fg = NSColor.colorWithCalibratedRed_green_blue_alpha_(1.0, 1.0, 1.0, 1.0)
-        scroll = NSScrollView.alloc().initWithFrame_(
-            NSMakeRect(12, pad_bottom, pw - 24, text_h))
-        scroll.setHasVerticalScroller_(True)
-        scroll.setAutohidesScrollers_(True)
-        scroll.setBorderType_(0)
-        scroll.setDrawsBackground_(True)
-        scroll.setBackgroundColor_(text_bg)
-        scroll.setWantsLayer_(True)
-        scroll.layer().setCornerRadius_(8)
-        scroll.layer().setMasksToBounds_(True)
-        tv = NSTextView.alloc().initWithFrame_(
-            NSMakeRect(0, 0, pw - 24, text_h))
-        tv.setEditable_(False)
-        tv.setSelectable_(True)
-        tv.setDrawsBackground_(True)
-        tv.setBackgroundColor_(text_bg)
-        tv.setTextColor_(text_fg)
-        tv.setFont_(NSFont.systemFontOfSize_(13.5))
-        tv.setVerticallyResizable_(True)
-        tv.setHorizontallyResizable_(False)
-        tv.textContainer().setContainerSize_((pw - 24, 1e7))
-        tv.textContainer().setWidthTracksTextView_(True)
-        tv.setString_(text)
-        scroll.setDocumentView_(tv)
-        cv.addSubview_(scroll)
+        self._popup_blur.setFrame_(NSMakeRect(0, 0, pw, ph))
+        self._popup_header.setFrame_(NSMakeRect(16, ph - 30, 120, 16))
+        self._popup_copy_btn.setFrame_(NSMakeRect(pw - 62, ph - 32, 26, 24))
+        self._popup_close_btn.setFrame_(NSMakeRect(pw - 32, ph - 32, 24, 24))
+        self._popup_scroll.setFrame_(NSMakeRect(12, pad_bottom, pw - 24, text_h))
+        self._popup_tv.setString_(text)
         self._response_panel.orderFront_(None)
         self._popup_response_text = text
 

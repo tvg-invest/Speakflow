@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,8 @@ DEFAULTS: dict[str, Any] = {
 class Config:
     def __init__(self) -> None:
         self._data: dict[str, Any] = {}
+        self._save_timer: threading.Timer | None = None
+        self._save_lock = threading.Lock()
         self.load()
 
     def load(self) -> None:
@@ -79,12 +82,20 @@ class Config:
         except OSError:
             logger.warning("Could not save config to %s", CONFIG_FILE, exc_info=True)
 
+    def _schedule_save(self) -> None:
+        with self._save_lock:
+            if self._save_timer is not None:
+                self._save_timer.cancel()
+            self._save_timer = threading.Timer(0.5, self.save)
+            self._save_timer.daemon = True
+            self._save_timer.start()
+
     def get(self, key: str, default: Any = None) -> Any:
         return self._data.get(key, default)
 
     def set(self, key: str, value: Any) -> None:
         self._data[key] = value
-        self.save()
+        self._schedule_save()
 
     @property
     def openai_api_key(self) -> str:

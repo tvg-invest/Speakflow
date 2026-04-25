@@ -304,9 +304,7 @@ class AudioRecorder:
     @staticmethod
     def _rms(chunk: np.ndarray) -> float:
         """Return the root-mean-square energy of an int16 audio chunk."""
-        # Normalise to [-1, 1] so the RMS is independent of bit depth.
-        samples = chunk.astype(np.float64) / 32768.0
-        return float(np.sqrt(np.mean(samples ** 2)))
+        return float(np.sqrt(np.mean(chunk.astype(np.int64) ** 2))) / 32768.0
 
     def _process_chunk(self, chunk: np.ndarray) -> None:
         """Analyse a chunk for calibration / silence detection."""
