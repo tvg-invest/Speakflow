@@ -413,6 +413,28 @@ class SpeakFlowUI(NSObject):
         logger.warning("Could not reactivate %s before paste", self._active_app)
         return False
 
+    # ── Deliver text (insert or clipboard) ─────────────────────
+
+    @objc.python_method
+    def _deliver_text(self, text):
+        """Insert text at cursor or copy to clipboard, with history."""
+        if self._float_triggered:
+            self._run_on_main_sync(lambda: self._set_clipboard(text))
+            self._run_on_main(lambda: self._ui_done_clipboard(text))
+        else:
+            reactivated = self._reactivate_target_app()
+            if reactivated:
+                _time.sleep(0.15)
+                self.text_inserter.insert_text(text)
+                self._run_on_main(lambda: self._ui_done(text))
+            else:
+                self._run_on_main_sync(lambda: self._set_clipboard(text))
+                self._run_on_main(lambda: self._ui_done_clipboard(text))
+        try:
+            history.add(text, app_name=self._active_app, language=self.config.language)
+        except Exception:
+            logger.warning("Failed to save history", exc_info=True)
+
     # ── Voice shortcuts ────────────────────────────────────────
 
     @objc.python_method
@@ -1278,7 +1300,7 @@ TIPS
             # User didn't actually change it (masked value or empty)
             return
         self.config.openai_api_key = raw
-        self.transcriber.client = openai.OpenAI(api_key=raw)
+        self.transcriber.client = openai.OpenAI(api_key=raw, max_retries=5)
         if len(raw) <= 8:
             masked = raw[:2] + "•" * (len(raw) - 2)
         else:
@@ -2290,23 +2312,7 @@ TIPS
         else:
             logger.info("Transcription: %d chars.", len(text))
 
-        if self._float_triggered:
-            self._run_on_main_sync(lambda: self._set_clipboard(text))
-            self._run_on_main(lambda: self._ui_done_clipboard(text))
-        else:
-            reactivated = self._reactivate_target_app()
-            logger.info("Reactivate %s: %s", self._active_app, reactivated)
-            if reactivated:
-                _time.sleep(0.15)
-                self.text_inserter.insert_text(text)
-                self._run_on_main(lambda: self._ui_done(text))
-            else:
-                self._run_on_main_sync(lambda: self._set_clipboard(text))
-                self._run_on_main(lambda: self._ui_done_clipboard(text))
-        try:
-            history.add(text, app_name=self._active_app, language=self.config.language)
-        except Exception:
-            logger.warning("Failed to save history", exc_info=True)
+        self._deliver_text(text)
 
     @objc.python_method
     def _process_ai_mode(self, audio_data, mode):
@@ -2372,24 +2378,8 @@ TIPS
         # Check voice shortcuts before classifying intent
         expansion = self._check_voice_shortcut(raw)
         if expansion is not None:
-            text = expansion
-            logger.info("Auto→shortcut: %d chars.", len(text))
-            if self._float_triggered:
-                self._run_on_main_sync(lambda: self._set_clipboard(text))
-                self._run_on_main(lambda: self._ui_done_clipboard(text))
-            else:
-                reactivated = self._reactivate_target_app()
-                if reactivated:
-                    _time.sleep(0.15)
-                    self.text_inserter.insert_text(text)
-                    self._run_on_main(lambda: self._ui_done(text))
-                else:
-                    self._run_on_main_sync(lambda: self._set_clipboard(text))
-                    self._run_on_main(lambda: self._ui_done_clipboard(text))
-            try:
-                history.add(text, app_name=self._active_app, language=self.config.language)
-            except Exception:
-                logger.warning("Failed to save history", exc_info=True)
+            logger.info("Auto→shortcut: %d chars.", len(expansion))
+            self._deliver_text(expansion)
             return
 
         app_ctx = (self._active_app or "") if self.config.context_cleanup else ""
@@ -2410,22 +2400,7 @@ TIPS
             if not text or not text.strip():
                 text = raw
             logger.info("Auto→dictation: %d chars.", len(text))
-            if self._float_triggered:
-                self._run_on_main_sync(lambda: self._set_clipboard(text))
-                self._run_on_main(lambda: self._ui_done_clipboard(text))
-            else:
-                reactivated = self._reactivate_target_app()
-                if reactivated:
-                    _time.sleep(0.15)
-                    self.text_inserter.insert_text(text)
-                    self._run_on_main(lambda: self._ui_done(text))
-                else:
-                    self._run_on_main_sync(lambda: self._set_clipboard(text))
-                    self._run_on_main(lambda: self._ui_done_clipboard(text))
-            try:
-                history.add(text, app_name=self._active_app, language=self.config.language)
-            except Exception:
-                logger.warning("Failed to save history", exc_info=True)
+            self._deliver_text(text)
         else:
             # AI mode — route to the right handler
             self._run_on_main(self._ui_mode_thinking)
@@ -2484,13 +2459,14 @@ TIPS
 
     @objc.python_method
     def _ui_done(self, text):
-        """Transition to ready + show last transcription."""
+        """Transition to ready + show last transcription + popup."""
         self._ui_ready()
         self._last_text_label.setStringValue_(text)
+        self._show_response_popup(text)
 
     @objc.python_method
     def _ui_done_clipboard(self, text):
-        """Show 'copied' feedback when triggered from float button."""
+        """Show 'copied' feedback when triggered from float button + popup."""
         self.status_label.setStringValue_("Copied to clipboard")
         self.status_label.setTextColor_(_GREEN())
         self._status_dot.layer().setBackgroundColor_(_GREEN().CGColor())
@@ -2504,6 +2480,7 @@ TIPS
             self._level_timer = None
         self._set_float_color(_GREEN())
         self._last_text_label.setStringValue_(text)
+        self._show_response_popup(text)
 
         def _auto_clear():
             if not self._recording and not self._processing:

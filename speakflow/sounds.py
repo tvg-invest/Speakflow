@@ -72,8 +72,13 @@ def _generate_tone(
         wf.writeframes(bytes(samples))
 
 
+_sounds_ready = False
+
 def _ensure_sounds() -> None:
     """Generate cached WAV files if they don't already exist."""
+    global _sounds_ready
+    if _sounds_ready:
+        return
     _SOUNDS_DIR.mkdir(parents=True, exist_ok=True)
     for filename, freq_start, freq_end, duration in (
         _TONE_START,
@@ -83,6 +88,7 @@ def _ensure_sounds() -> None:
         path = _SOUNDS_DIR / filename
         if not path.exists():
             _generate_tone(path, freq_start, freq_end, duration)
+    _sounds_ready = True
 
 
 # ---------------------------------------------------------------------------

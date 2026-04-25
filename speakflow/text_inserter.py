@@ -134,7 +134,7 @@ class TextInserter:
             logger.info("Firing Cmd+V paste (%d chars)", len(text))
             _simulate_cmd_v()
 
-            time.sleep(0.5)
+            time.sleep(0.15)
             logger.info("Paste completed")
         finally:
             _write_clipboard(original)
