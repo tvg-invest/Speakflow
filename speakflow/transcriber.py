@@ -10,6 +10,13 @@ import openai
 logger = logging.getLogger(__name__)
 
 
+def _rate_limit_message(exc: openai.RateLimitError) -> str:
+    msg = str(exc).lower()
+    if "quota" in msg or "billing" in msg or "exceeded" in msg:
+        return "OpenAI credits used up. Add credits at platform.openai.com/account/billing."
+    return "Rate limit exceeded. Please wait a moment and try again."
+
+
 class Transcriber:
     """Handles speech-to-text transcription via OpenAI Whisper and optional
     GPT-based text cleanup."""
@@ -24,7 +31,7 @@ class Transcriber:
         editing_strength: str = "medium",
         personal_dictionary: list | None = None,
     ) -> None:
-        self.client = openai.OpenAI(api_key=api_key)
+        self.client = openai.OpenAI(api_key=api_key, max_retries=5)
         self.model = model
         self.language = language
         self.auto_detect = auto_detect
@@ -80,11 +87,9 @@ class Transcriber:
             raise RuntimeError(
                 "Authentication failed. Please check your OpenAI API key."
             )
-        except openai.RateLimitError:
+        except openai.RateLimitError as exc:
             logger.error("OpenAI rate limit exceeded.")
-            raise RuntimeError(
-                "Rate limit exceeded. Please wait a moment and try again."
-            )
+            raise RuntimeError(_rate_limit_message(exc))
         except openai.APIConnectionError:
             logger.error("Could not connect to the OpenAI API.")
             raise RuntimeError(
@@ -248,11 +253,9 @@ class Transcriber:
             raise RuntimeError(
                 "Authentication failed. Please check your OpenAI API key."
             )
-        except openai.RateLimitError:
+        except openai.RateLimitError as exc:
             logger.error("OpenAI rate limit exceeded during cleanup.")
-            raise RuntimeError(
-                "Rate limit exceeded. Please wait a moment and try again."
-            )
+            raise RuntimeError(_rate_limit_message(exc))
         except openai.APIConnectionError:
             logger.error("Could not connect to the OpenAI API during cleanup.")
             raise RuntimeError(
@@ -341,8 +344,8 @@ class Transcriber:
             return result
         except openai.AuthenticationError:
             raise RuntimeError("Authentication failed. Check your API key.")
-        except openai.RateLimitError:
-            raise RuntimeError("Rate limit exceeded. Wait a moment and retry.")
+        except openai.RateLimitError as exc:
+            raise RuntimeError(_rate_limit_message(exc))
         except openai.APIConnectionError:
             raise RuntimeError("Cannot reach the OpenAI API. Check your connection.")
         except openai.APIError as exc:
@@ -455,8 +458,8 @@ class Transcriber:
             return content.strip() if content else ""
         except openai.AuthenticationError:
             raise RuntimeError("Authentication failed. Check your API key.")
-        except openai.RateLimitError:
-            raise RuntimeError("Rate limit exceeded. Wait a moment and retry.")
+        except openai.RateLimitError as exc:
+            raise RuntimeError(_rate_limit_message(exc))
         except openai.APIConnectionError:
             raise RuntimeError("Cannot reach the OpenAI API. Check your connection.")
         except openai.APIError as exc:
@@ -508,8 +511,8 @@ class Transcriber:
             return content.strip() if content else ""
         except openai.AuthenticationError:
             raise RuntimeError("Authentication failed. Check your API key.")
-        except openai.RateLimitError:
-            raise RuntimeError("Rate limit exceeded. Wait a moment and retry.")
+        except openai.RateLimitError as exc:
+            raise RuntimeError(_rate_limit_message(exc))
         except openai.APIConnectionError:
             raise RuntimeError("Cannot reach the OpenAI API. Check your connection.")
         except openai.APIError as exc:
@@ -548,8 +551,8 @@ class Transcriber:
             return content.strip() if content else ""
         except openai.AuthenticationError:
             raise RuntimeError("Authentication failed. Check your API key.")
-        except openai.RateLimitError:
-            raise RuntimeError("Rate limit exceeded. Wait a moment and retry.")
+        except openai.RateLimitError as exc:
+            raise RuntimeError(_rate_limit_message(exc))
         except openai.APIConnectionError:
             raise RuntimeError("Cannot reach the OpenAI API. Check your connection.")
         except openai.APIError as exc:
@@ -574,8 +577,8 @@ class Transcriber:
             return content.strip() if content else ""
         except openai.AuthenticationError:
             raise RuntimeError("Authentication failed. Check your API key.")
-        except openai.RateLimitError:
-            raise RuntimeError("Rate limit exceeded. Wait a moment and retry.")
+        except openai.RateLimitError as exc:
+            raise RuntimeError(_rate_limit_message(exc))
         except openai.APIConnectionError:
             raise RuntimeError("Cannot reach the OpenAI API. Check your connection.")
         except openai.APIError as exc:
