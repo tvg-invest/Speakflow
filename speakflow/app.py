@@ -43,7 +43,7 @@ from .transcriber import Transcriber
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.6.0"
+VERSION = "1.6.1"
 
 LANG_OPTIONS = ["Danish", "English", "Auto-detect"]
 LANG_CODES = {"Danish": "da", "English": "en", "Auto-detect": "auto"}
@@ -608,9 +608,9 @@ class SpeakFlowUI(NSObject):
         self.rec_button.setAction_("toggleRecording:")
         y -= card_h + 16
 
-        # ── Settings card (11 rows) ──
+        # ── Settings card (12 rows) ──
         row_h = 34
-        num_rows = 11
+        num_rows = 12
         set_h = 44 + num_rows * row_h + 10
         stc = self._card(v, pad, y - set_h, cw, set_h)
 
@@ -672,9 +672,9 @@ class SpeakFlowUI(NSObject):
                     NSFont.systemFontOfSize_(13), _DIM())
         ry -= row_h
 
-        saved_langs = set(self.config.my_languages)
+        self._active_langs: set[str] = set(self.config.my_languages)
         self._lang_buttons: dict[str, NSButton] = {}
-        pill_w, pill_h, gap = 28, 22, 3
+        pill_w, pill_h, gap = 28, 22, 4
         cols = 5
         start_x = lx
         for i, (label, code) in enumerate(MY_LANG_PILLS):
@@ -683,19 +683,18 @@ class SpeakFlowUI(NSObject):
             px = start_x + col * (pill_w + gap)
             py = ry + 5 - row_offset * (pill_h + gap)
             btn = NSButton.alloc().initWithFrame_(NSMakeRect(px, py, pill_w, pill_h))
-            btn.setButtonType_(1)
+            btn.setButtonType_(0)
             btn.setBordered_(False)
             btn.setWantsLayer_(True)
             btn.layer().setCornerRadius_(6)
+            btn.setTag_(i)
             btn.setTarget_(self)
             btn.setAction_("langPillToggled:")
-            on = code in saved_langs
-            btn.setState_(1 if on else 0)
+            on = code in self._active_langs
             self._style_lang_pill(btn, on)
-            btn.setTag_(i)
             stc.addSubview_(btn)
             self._lang_buttons[code] = btn
-        ry -= row_h
+        ry -= row_h + pill_h + gap
 
         # Row — Microphone
         self._label(stc, "Microphone", lx, ry + 6, 100, 24,
@@ -1373,16 +1372,17 @@ TIPS
     def langPillToggled_(self, sender):
         tag = sender.tag()
         code = MY_LANG_PILLS[tag][1]
-        on = sender.state() == 1
 
-        active = [c for c, b in self._lang_buttons.items() if b.state() == 1]
-        if not on and len(active) == 0:
-            sender.setState_(1)
-            return
+        if code in self._active_langs:
+            if len(self._active_langs) <= 1:
+                return
+            self._active_langs.discard(code)
+            self._style_lang_pill(sender, False)
+        else:
+            self._active_langs.add(code)
+            self._style_lang_pill(sender, True)
 
-        self._style_lang_pill(sender, on)
-
-        my_langs = [c for _, c in MY_LANG_PILLS if self._lang_buttons[c].state() == 1]
+        my_langs = [c for _, c in MY_LANG_PILLS if c in self._active_langs]
         self.config.my_languages = my_langs
         self.config.language = my_langs[0]
         self.config.auto_language_detect = len(my_langs) > 1
