@@ -43,10 +43,15 @@ from .transcriber import Transcriber
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.5.4"
+VERSION = "1.6.0"
 
 LANG_OPTIONS = ["Danish", "English", "Auto-detect"]
 LANG_CODES = {"Danish": "da", "English": "en", "Auto-detect": "auto"}
+
+MY_LANG_PILLS = [
+    ("DA", "da"), ("EN", "en"), ("DE", "de"), ("ES", "es"), ("FR", "fr"),
+    ("SV", "sv"), ("NO", "no"), ("NL", "nl"), ("PT", "pt"), ("IT", "it"),
+]
 
 _LAUNCH_AGENT = Path.home() / "Library" / "LaunchAgents" / "com.speakflow.app.plist"
 _APP_PATH = Path.home() / "Desktop" / "SpeakFlow.app"
@@ -194,14 +199,16 @@ class SpeakFlowUI(NSObject):
         self.audio_recorder.on_error = self._on_record_error
         self.audio_recorder.on_max_duration = self._on_silence
 
+        my_langs = self.config.my_languages
         self.transcriber = Transcriber(
             api_key=self.config.openai_api_key,
             model=self.config.model,
-            language=self.config.language,
-            auto_detect=self.config.auto_language_detect,
+            language=my_langs[0] if my_langs else "da",
+            auto_detect=len(my_langs) > 1,
             cleanup_model=self.config.ai_cleanup_model,
             editing_strength=self.config.editing_strength,
             personal_dictionary=self.config.personal_dictionary,
+            allowed_languages=my_langs,
         )
         self.text_inserter = TextInserter(method=self.config.text_insertion_method)
         self.hotkey_listener = HotkeyListener(
@@ -601,9 +608,9 @@ class SpeakFlowUI(NSObject):
         self.rec_button.setAction_("toggleRecording:")
         y -= card_h + 16
 
-        # ── Settings card (10 rows) ──
+        # ── Settings card (11 rows) ──
         row_h = 34
-        num_rows = 10
+        num_rows = 11
         set_h = 44 + num_rows * row_h + 10
         stc = self._card(v, pad, y - set_h, cw, set_h)
 
@@ -660,24 +667,34 @@ class SpeakFlowUI(NSObject):
         self.hotkey_btn.setAction_("captureHotkey:")
         ry -= row_h
 
-        # Row 2 — Language
-        self._label(stc, "Language", lx, ry + 6, 100, 24,
+        # Row 2+3 — My Languages (pill toggles)
+        self._label(stc, "My Languages", lx, ry + 6, 120, 24,
                     NSFont.systemFontOfSize_(13), _DIM())
-        self.lang_popup = NSPopUpButton.alloc().initWithFrame_pullsDown_(
-            NSMakeRect(rx - 160, ry + 5, 160, 26), False)
-        for lang in LANG_OPTIONS:
-            self.lang_popup.addItemWithTitle_(lang)
-        current = {v2: k for k, v2 in LANG_CODES.items()}.get(self.config.language, "Danish")
-        self.lang_popup.selectItemWithTitle_(current)
-        self.lang_popup.setTarget_(self)
-        self.lang_popup.setAction_("languageChanged:")
-        self.lang_popup.setWantsLayer_(True)
-        self.lang_popup.setBordered_(False)
-        self.lang_popup.layer().setCornerRadius_(6)
-        self.lang_popup.layer().setBackgroundColor_(_SEC_BG().CGColor())
-        self.lang_popup.layer().setBorderWidth_(1)
-        self.lang_popup.layer().setBorderColor_(_SEC_EDGE().CGColor())
-        stc.addSubview_(self.lang_popup)
+        ry -= row_h
+
+        saved_langs = set(self.config.my_languages)
+        self._lang_buttons: dict[str, NSButton] = {}
+        pill_w, pill_h, gap = 28, 22, 3
+        cols = 5
+        start_x = lx
+        for i, (label, code) in enumerate(MY_LANG_PILLS):
+            col = i % cols
+            row_offset = i // cols
+            px = start_x + col * (pill_w + gap)
+            py = ry + 5 - row_offset * (pill_h + gap)
+            btn = NSButton.alloc().initWithFrame_(NSMakeRect(px, py, pill_w, pill_h))
+            btn.setButtonType_(1)
+            btn.setBordered_(False)
+            btn.setWantsLayer_(True)
+            btn.layer().setCornerRadius_(6)
+            btn.setTarget_(self)
+            btn.setAction_("langPillToggled:")
+            on = code in saved_langs
+            btn.setState_(1 if on else 0)
+            self._style_lang_pill(btn, on)
+            btn.setTag_(i)
+            stc.addSubview_(btn)
+            self._lang_buttons[code] = btn
         ry -= row_h
 
         # Row — Microphone
@@ -1112,7 +1129,7 @@ Right-click to switch modes.
 SETTINGS
 
   • Hotkey — change the keyboard shortcut
-  • Language — set your dictation language or use auto-detect
+  • My Languages — select which languages you speak; auto-detects between them
   • Cleanup Level — controls how much AI cleans up your speech:
       Off = raw transcription, Light = punctuation and filler words only,
       Medium = full cleanup with grammar and clarity fixes
@@ -1344,13 +1361,34 @@ TIPS
             self.config.microphone = dev["id"]
             self.audio_recorder.device = dev["id"]
 
-    def languageChanged_(self, sender):
-        name = sender.titleOfSelectedItem()
-        code = LANG_CODES.get(name, "da")
-        self.config.language = code
-        self.config.auto_language_detect = (code == "auto")
-        self.transcriber.language = code
-        self.transcriber.auto_detect = (code == "auto")
+    @objc.python_method
+    def _style_lang_pill(self, btn, on: bool):
+        label_code = MY_LANG_PILLS[btn.tag()][0]
+        font = NSFont.systemFontOfSize_weight_(10, NSFontWeightSemibold if on else NSFontWeightMedium)
+        color = NSColor.blackColor() if on else _DIM()
+        bg = _GOLD().CGColor() if on else _SEC_BG().CGColor()
+        btn.layer().setBackgroundColor_(bg)
+        self._set_btn_title(btn, label_code, font, color=color)
+
+    def langPillToggled_(self, sender):
+        tag = sender.tag()
+        code = MY_LANG_PILLS[tag][1]
+        on = sender.state() == 1
+
+        active = [c for c, b in self._lang_buttons.items() if b.state() == 1]
+        if not on and len(active) == 0:
+            sender.setState_(1)
+            return
+
+        self._style_lang_pill(sender, on)
+
+        my_langs = [c for _, c in MY_LANG_PILLS if self._lang_buttons[c].state() == 1]
+        self.config.my_languages = my_langs
+        self.config.language = my_langs[0]
+        self.config.auto_language_detect = len(my_langs) > 1
+        self.transcriber.language = my_langs[0]
+        self.transcriber.auto_detect = len(my_langs) > 1
+        self.transcriber.allowed_languages = frozenset(my_langs)
 
     def cleanupLevelChanged_(self, sender):
         title = sender.titleOfSelectedItem()

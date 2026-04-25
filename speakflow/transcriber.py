@@ -44,6 +44,7 @@ class Transcriber:
         cleanup_model: str = "gpt-4o-mini",
         editing_strength: str = "medium",
         personal_dictionary: list | None = None,
+        allowed_languages: list | None = None,
     ) -> None:
         self.client = openai.OpenAI(api_key=api_key, max_retries=5)
         self.model = model
@@ -52,6 +53,9 @@ class Transcriber:
         self.cleanup_model = cleanup_model
         self.editing_strength = editing_strength
         self.personal_dictionary = personal_dictionary or []
+        self.allowed_languages: frozenset[str] = frozenset(
+            allowed_languages or ("da", "en")
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -59,10 +63,17 @@ class Transcriber:
 
     _GARBLE_DOTS = re.compile(r"(?:[A-Z]\.){3,}")
     _GARBLE_NON_LATIN_RATIO = 0.3
-    _ALLOWED_LANGUAGES = frozenset(("da", "en"))
-    _LANGUAGE_BIAS_PROMPT = (
-        "Dansk eller engelsk tale. Danish or English speech."
-    )
+    _LANG_NAMES: dict[str, str] = {
+        "da": "dansk", "en": "English", "de": "Deutsch", "es": "español",
+        "fr": "français", "sv": "svenska", "no": "norsk", "nl": "Nederlands",
+        "pt": "português", "it": "italiano", "fi": "suomi", "pl": "polski",
+        "tr": "Türkçe", "ru": "русский", "ja": "日本語", "zh": "中文",
+        "ko": "한국어", "ar": "العربية", "hi": "हिन्दी",
+    }
+
+    def _build_bias_prompt(self) -> str:
+        names = [self._LANG_NAMES.get(c, c) for c in sorted(self.allowed_languages)]
+        return f"Speech in {', '.join(names)}."
 
     @staticmethod
     def _is_garbled(text: str) -> bool:
@@ -139,7 +150,7 @@ class Transcriber:
 
         prompt_parts: list[str] = []
         if self.auto_detect:
-            prompt_parts.append(self._LANGUAGE_BIAS_PROMPT)
+            prompt_parts.append(self._build_bias_prompt())
         if self.personal_dictionary:
             prompt_parts.append(", ".join(self.personal_dictionary))
         if prompt_parts:
@@ -161,7 +172,7 @@ class Transcriber:
             needs_retry = False
             if self.auto_detect:
                 detected_lang = getattr(response, "language", None)
-                if detected_lang and detected_lang not in self._ALLOWED_LANGUAGES:
+                if detected_lang and detected_lang not in self.allowed_languages:
                     logger.warning(
                         "Whisper detected '%s' (not da/en), retrying with language=%s",
                         detected_lang, self.language,

@@ -37,6 +37,7 @@ DEFAULTS: dict[str, Any] = {
     "active_mode": "dictation",    # dictation, ask, vision, vibecode, or custom name
     "custom_modes": [],            # list of {"name": str, "prompt": str}
     "voice_shortcuts": [],         # list of {"trigger": str, "expansion": str}
+    "my_languages": ["da", "en"],  # language codes the user speaks
 }
 
 
@@ -266,6 +267,14 @@ class Config:
     @custom_modes.setter
     def custom_modes(self, value: list) -> None:
         self.set("custom_modes", value)
+
+    @property
+    def my_languages(self) -> list:
+        return self._data.get("my_languages", ["da", "en"])
+
+    @my_languages.setter
+    def my_languages(self, value: list) -> None:
+        self.set("my_languages", value if value else ["da"])
 
     @property
     def voice_shortcuts(self) -> list:
