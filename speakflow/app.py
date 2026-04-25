@@ -1893,7 +1893,8 @@ TIPS
                     real_py = _os.path.realpath(_sys.executable)
                     if real_py and _os.path.isfile(real_py):
                         embedded = str(app_bin / "python3")
-                        shutil.copy2(real_py, embedded)
+                        if _os.path.realpath(embedded) != real_py:
+                            shutil.copy2(real_py, embedded)
                         # Fix dylib path so embedded python finds its framework
                         fw_dir = _os.path.dirname(_os.path.dirname(real_py))
                         dylib = _os.path.join(fw_dir, "Python3")
