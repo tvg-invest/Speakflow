@@ -43,7 +43,7 @@ from .transcriber import Transcriber
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.5.3"
+VERSION = "1.5.4"
 
 LANG_OPTIONS = ["Danish", "English", "Auto-detect"]
 LANG_CODES = {"Danish": "da", "English": "en", "Auto-detect": "auto"}

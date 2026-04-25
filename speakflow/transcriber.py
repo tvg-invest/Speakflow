@@ -59,6 +59,10 @@ class Transcriber:
 
     _GARBLE_DOTS = re.compile(r"(?:[A-Z]\.){3,}")
     _GARBLE_NON_LATIN_RATIO = 0.3
+    _ALLOWED_LANGUAGES = frozenset(("da", "en"))
+    _LANGUAGE_BIAS_PROMPT = (
+        "Dansk eller engelsk tale. Danish or English speech."
+    )
 
     @staticmethod
     def _is_garbled(text: str) -> bool:
@@ -132,10 +136,19 @@ class Transcriber:
         }
         if not self.auto_detect:
             kwargs["language"] = self.language
+
+        prompt_parts: list[str] = []
+        if self.auto_detect:
+            prompt_parts.append(self._LANGUAGE_BIAS_PROMPT)
         if self.personal_dictionary:
-            kwargs["prompt"] = ", ".join(self.personal_dictionary)
+            prompt_parts.append(", ".join(self.personal_dictionary))
+        if prompt_parts:
+            kwargs["prompt"] = " ".join(prompt_parts)
 
         try:
+            if self.auto_detect:
+                kwargs["response_format"] = "verbose_json"
+
             logger.debug(
                 "Sending audio to Whisper API (model=%s, auto_detect=%s)",
                 self.model,
@@ -145,13 +158,26 @@ class Transcriber:
             raw_text: str = response.text
             logger.debug("Raw transcription: %s", raw_text)
 
-            if self.auto_detect and self._is_garbled(raw_text):
-                logger.warning(
-                    "Garbled auto-detect output (%r), retrying with language=%s",
-                    raw_text, self.language,
-                )
+            needs_retry = False
+            if self.auto_detect:
+                detected_lang = getattr(response, "language", None)
+                if detected_lang and detected_lang not in self._ALLOWED_LANGUAGES:
+                    logger.warning(
+                        "Whisper detected '%s' (not da/en), retrying with language=%s",
+                        detected_lang, self.language,
+                    )
+                    needs_retry = True
+                elif self._is_garbled(raw_text):
+                    logger.warning(
+                        "Garbled output (%r), retrying with language=%s",
+                        raw_text, self.language,
+                    )
+                    needs_retry = True
+
+            if needs_retry:
                 buf.seek(0)
                 kwargs["language"] = self.language
+                kwargs.pop("response_format", None)
                 response = self.client.audio.transcriptions.create(**kwargs, timeout=30)
                 raw_text = response.text
                 logger.debug("Retry transcription: %s", raw_text)
